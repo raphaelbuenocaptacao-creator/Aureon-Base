@@ -19,10 +19,20 @@ create table if not exists projects (
 create table if not exists project_users (
   project_id uuid not null references projects(id) on delete cascade,
   user_id uuid not null references users(id) on delete cascade,
-  role text not null default 'member',
+  role text not null default 'member' check (role in ('owner','admin','member')),
   created_at timestamptz not null default now(),
   primary key(project_id,user_id)
 );
+
+create table if not exists sessions (
+  id uuid primary key,
+  user_id uuid not null references users(id) on delete cascade,
+  refresh_token_hash text not null,
+  expires_at timestamptz not null,
+  revoked_at timestamptz,
+  created_at timestamptz not null default now()
+);
+create index if not exists idx_sessions_user on sessions(user_id);
 
 create table if not exists audit_logs (
   id bigserial primary key,
@@ -37,14 +47,26 @@ create table if not exists trading_operations (
   project_id uuid not null references projects(id) on delete cascade,
   user_id uuid not null references users(id) on delete cascade,
   asset text not null,
-  side text not null,
-  contracts integer not null check (contracts > 0),
+  side text not null check (side in ('Compra','Venda')),
+  contracts integer not null check (contracts > 0 and contracts <= 1000),
   result numeric(14,2) not null,
-  stop_planned numeric(14,2) not null default 0,
+  stop_planned numeric(14,2) not null default 0 check (stop_planned >= 0),
   setup text not null default 'Sem setup',
   note text not null default '',
   operated_at timestamptz not null,
   created_at timestamptz not null default now()
+);
+
+create table if not exists trading_settings (
+  project_id uuid not null references projects(id) on delete cascade,
+  user_id uuid not null references users(id) on delete cascade,
+  daily_stop numeric(14,2) not null default 500,
+  daily_target numeric(14,2) not null default 1000,
+  base_contracts integer not null default 1,
+  profit_step numeric(14,2) not null default 1000,
+  max_contracts integer not null default 20,
+  updated_at timestamptz not null default now(),
+  primary key(project_id,user_id)
 );
 
 create index if not exists idx_trading_operations_user_time on trading_operations(user_id, operated_at desc);
