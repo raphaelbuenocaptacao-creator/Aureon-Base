@@ -13,13 +13,24 @@ app.disable('x-powered-by');
 app.set('trust proxy', 1);
 app.use(helmet());
 
-const corsOrigins = (process.env.CORS_ORIGINS || '').split(',').map(v => v.trim()).filter(Boolean);
+const builtInOrigins = [
+  'https://raphaelbuenocaptacao-creator.github.io',
+  'http://localhost:5500',
+  'http://127.0.0.1:5500',
+];
+const configuredOrigins = (process.env.CORS_ORIGINS || '')
+  .split(',')
+  .map(v => v.trim())
+  .filter(Boolean);
+const corsOrigins = new Set([...builtInOrigins, ...configuredOrigins]);
 app.use(cors({
   origin(origin, cb) {
-    if (!origin || corsOrigins.includes('*') || corsOrigins.includes(origin)) return cb(null, true);
-    return cb(new Error('CORS origin denied'));
+    if (!origin || corsOrigins.has('*') || corsOrigins.has(origin)) return cb(null, true);
+    return cb(null, false);
   },
   credentials: false,
+  methods: ['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS'],
+  allowedHeaders: ['Content-Type', 'Authorization'],
 }));
 app.use(express.json({ limit: '256kb' }));
 
@@ -103,12 +114,23 @@ async function subscriptionFor(projectId, userId) {
 function accessState(subscription) {
   if (!subscription) return { allowed: false, status: 'none', reason: 'no_subscription' };
   if (subscription.status === 'lifetime') return { allowed: true, status: 'lifetime', reason: null };
-  if (subscription.status === 'active' && (!subscription.current_period_end || new Date(subscription.current_period_end) > new Date())) return { allowed: true, status: 'active', reason: null };
+  if (subscription.status === 'active' && (!subscription.current_period_end || new Date(subscription.current_period_end) > new Date())) {
+    return { allowed: true, status: 'active', reason: null };
+  }
   if (subscription.status === 'trialing' && subscription.trial_ends_at && new Date(subscription.trial_ends_at) > new Date()) {
     const ms = new Date(subscription.trial_ends_at) - new Date();
-    return { allowed: true, status: 'trialing', reason: null, trial_days_remaining: Math.max(0, Math.ceil(ms / 86400000)) };
+    return {
+      allowed: true,
+      status: 'trialing',
+      reason: null,
+      trial_days_remaining: Math.max(0, Math.ceil(ms / 86400000)),
+    };
   }
-  return { allowed: false, status: subscription.status, reason: subscription.status === 'trialing' ? 'trial_expired' : 'subscription_inactive' };
+  return {
+    allowed: false,
+    status: subscription.status,
+    reason: subscription.status === 'trialing' ? 'trial_expired' : 'subscription_inactive',
+  };
 }
 
 async function ensureProjectAccess(req, res) {
@@ -149,7 +171,13 @@ async function enrollUser({ userId, email, project }) {
   );
 }
 
-app.get('/health', (_req, res) => res.json({ ok: true, service: 'aureon-base', version: '0.2.1', time: new Date().toISOString() }));
+app.get('/health', (_req, res) => res.json({
+  ok: true,
+  service: 'aureon-base',
+  version: '0.3.0',
+  time: new Date().toISOString(),
+}));
+
 app.get('/ready', async (_req, res) => {
   const health = await databaseHealth();
   if (health.ok) return res.json({ ok: true, database: 'online', ...health });
@@ -160,8 +188,12 @@ app.post('/auth/register', authLimit, async (req, res) => {
   const email = String(req.body?.email || '').trim().toLowerCase();
   const password = String(req.body?.password || '');
   const projectSlug = String(req.body?.project_slug || process.env.DEFAULT_PROJECT_SLUG || 'tradevision').trim().toLowerCase();
-  if (!emailRegex.test(email) || password.length < 10 || password.length > 128) return res.status(400).json({ error: 'invalid_credentials' });
-  if (allowedEmails.length && !allowedEmails.includes(email)) return res.status(403).json({ error: 'email_not_allowed' });
+  if (!emailRegex.test(email) || password.length < 10 || password.length > 128) {
+    return res.status(400).json({ error: 'invalid_credentials' });
+  }
+  if (allowedEmails.length && !allowedEmails.includes(email)) {
+    return res.status(403).json({ error: 'email_not_allowed' });
+  }
 
   const project = await projectBySlug(projectSlug);
   if (!project || !project.is_active) return res.status(404).json({ error: 'project_not_found' });
@@ -169,13 +201,22 @@ app.post('/auth/register', authLimit, async (req, res) => {
   try {
     const id = uuid();
     const passwordHash = await bcrypt.hash(password, 12);
-    const result = await query('insert into users(id,email,password_hash) values($1,$2,$3) returning id,email,created_at', [id, email, passwordHash]);
+    const result = await query(
+      'insert into users(id,email,password_hash) values($1,$2,$3) returning id,email,created_at',
+      [id, email, passwordHash]
+    );
     const user = result.rows[0];
     await enrollUser({ userId: id, email, project });
     await audit({ userId: id, projectId: project.id, event: 'user.registered', req, metadata: { email, project: project.slug } });
     const tokens = await issueSession(user);
     const subscription = await subscriptionFor(project.id, id);
-    res.status(201).json({ user, project: { slug: project.slug, name: project.name }, subscription, access: accessState(subscription), ...tokens });
+    res.status(201).json({
+      user,
+      project: { slug: project.slug, name: project.name },
+      subscription,
+      access: accessState(subscription),
+      ...tokens,
+    });
   } catch (err) {
     if (err.code === '23505') return res.status(409).json({ error: 'email_already_exists' });
     console.error('register_error', err);
@@ -190,7 +231,9 @@ app.post('/auth/login', authLimit, async (req, res) => {
   try {
     const result = await query('select id,email,password_hash,is_active,is_superadmin from users where email=$1', [email]);
     const user = result.rows[0];
-    if (!user || !user.is_active || !(await bcrypt.compare(password, user.password_hash))) return res.status(401).json({ error: 'invalid_credentials' });
+    if (!user || !user.is_active || !(await bcrypt.compare(password, user.password_hash))) {
+      return res.status(401).json({ error: 'invalid_credentials' });
+    }
     await audit({ userId: user.id, event: 'user.login', req });
     const tokens = await issueSession(user);
     res.json({ user: { id: user.id, email: user.email, is_superadmin: user.is_superadmin }, ...tokens });
@@ -223,11 +266,36 @@ app.post('/auth/logout', requireAuth, async (req, res) => {
   if (refreshToken) {
     try {
       const payload = verifyRefreshToken(refreshToken);
-      if (payload.sub === req.user.sub) await query('update sessions set revoked_at=now() where id=$1 and user_id=$2', [payload.sid, req.user.sub]);
+      if (payload.sub === req.user.sub) {
+        await query('update sessions set revoked_at=now() where id=$1 and user_id=$2', [payload.sid, req.user.sub]);
+      }
     } catch {}
   }
   await audit({ userId: req.user.sub, event: 'user.logout', req });
   res.status(204).end();
+});
+
+app.post('/auth/change-password', authLimit, requireAuth, async (req, res) => {
+  const currentPassword = String(req.body?.current_password || '');
+  const newPassword = String(req.body?.new_password || '');
+  if (newPassword.length < 10 || newPassword.length > 128 || newPassword === currentPassword) {
+    return res.status(400).json({ error: 'invalid_new_password' });
+  }
+  try {
+    const found = await query('select id,password_hash from users where id=$1 and is_active=true', [req.user.sub]);
+    const user = found.rows[0];
+    if (!user || !(await bcrypt.compare(currentPassword, user.password_hash))) {
+      return res.status(401).json({ error: 'invalid_current_password' });
+    }
+    const passwordHash = await bcrypt.hash(newPassword, 12);
+    await query('update users set password_hash=$1,updated_at=now() where id=$2', [passwordHash, req.user.sub]);
+    await query('update sessions set revoked_at=now() where user_id=$1 and revoked_at is null', [req.user.sub]);
+    await audit({ userId: req.user.sub, event: 'user.password_changed', req });
+    res.status(204).end();
+  } catch (err) {
+    console.error('change_password_error', err);
+    res.status(500).json({ error: 'internal_error' });
+  }
 });
 
 app.get('/me', requireAuth, async (req, res) => {
@@ -258,14 +326,20 @@ app.get('/projects/:slug/access', requireAuth, async (req, res) => {
 app.get('/projects/:slug/plans', async (req, res) => {
   const project = await projectBySlug(req.params.slug);
   if (!project || !project.is_active) return res.status(404).json({ error: 'project_not_found' });
-  const plans = await query('select code,name,price_cents,currency,interval,features from plans where project_id=$1 and is_active=true order by price_cents', [project.id]);
+  const plans = await query(
+    'select code,name,price_cents,currency,interval,features from plans where project_id=$1 and is_active=true order by price_cents',
+    [project.id]
+  );
   res.json(plans.rows);
 });
 
 app.get('/projects/:slug/operations', requireAuth, async (req, res) => {
   const ctx = await ensureProjectAccess(req, res); if (!ctx) return;
   const limit = Math.min(Math.max(Number(req.query.limit || 500), 1), 1000);
-  const result = await query('select * from trading_operations where project_id=$1 and user_id=$2 order by operated_at desc limit $3', [ctx.membership.id, req.user.sub, limit]);
+  const result = await query(
+    'select * from trading_operations where project_id=$1 and user_id=$2 order by operated_at desc limit $3',
+    [ctx.membership.id, req.user.sub, limit]
+  );
   res.json(result.rows);
 });
 
@@ -279,41 +353,79 @@ app.post('/projects/:slug/operations', requireAuth, async (req, res) => {
   const setup = String(req.body?.setup || 'Sem setup').trim().slice(0, 80);
   const note = String(req.body?.note || '').trim().slice(0, 1000);
   const operatedAt = new Date(req.body?.operated_at);
-  if (!asset || asset.length > 20 || !['Compra','Venda'].includes(side) || !Number.isInteger(contracts) || contracts < 1 || contracts > 1000 || !Number.isFinite(resultValue) || !Number.isFinite(stopPlanned) || stopPlanned < 0 || Number.isNaN(operatedAt.getTime())) return res.status(400).json({ error: 'invalid_operation' });
+  if (!asset || asset.length > 20 || !['Compra', 'Venda'].includes(side) || !Number.isInteger(contracts) || contracts < 1 || contracts > 1000 || !Number.isFinite(resultValue) || !Number.isFinite(stopPlanned) || stopPlanned < 0 || Number.isNaN(operatedAt.getTime())) {
+    return res.status(400).json({ error: 'invalid_operation' });
+  }
   const row = await query(
     `insert into trading_operations(id,project_id,user_id,asset,side,contracts,result,stop_planned,setup,note,operated_at)
      values($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11) returning *`,
     [uuid(), ctx.membership.id, req.user.sub, asset, side, contracts, resultValue, stopPlanned, setup, note, operatedAt.toISOString()]
   );
-  await audit({ userId: req.user.sub, projectId: ctx.membership.id, event: 'trade.operation.created', req, metadata: { operation_id: row.rows[0].id } });
+  await audit({
+    userId: req.user.sub,
+    projectId: ctx.membership.id,
+    event: 'trade.operation.created',
+    req,
+    metadata: { operation_id: row.rows[0].id },
+  });
   res.status(201).json(row.rows[0]);
 });
 
 app.delete('/projects/:slug/operations/:id', requireAuth, async (req, res) => {
   const ctx = await ensureProjectAccess(req, res); if (!ctx) return;
-  const result = await query('delete from trading_operations where id=$1 and project_id=$2 and user_id=$3 returning id', [req.params.id, ctx.membership.id, req.user.sub]);
+  const result = await query(
+    'delete from trading_operations where id=$1 and project_id=$2 and user_id=$3 returning id',
+    [req.params.id, ctx.membership.id, req.user.sub]
+  );
   if (!result.rows[0]) return res.status(404).json({ error: 'not_found' });
-  await audit({ userId: req.user.sub, projectId: ctx.membership.id, event: 'trade.operation.deleted', req, metadata: { operation_id: req.params.id } });
+  await audit({
+    userId: req.user.sub,
+    projectId: ctx.membership.id,
+    event: 'trade.operation.deleted',
+    req,
+    metadata: { operation_id: req.params.id },
+  });
   res.status(204).end();
 });
 
 app.get('/projects/:slug/settings', requireAuth, async (req, res) => {
   const ctx = await ensureProjectAccess(req, res); if (!ctx) return;
   const found = await query('select * from trading_settings where project_id=$1 and user_id=$2', [ctx.membership.id, req.user.sub]);
-  res.json(found.rows[0] || { daily_stop: 500, daily_target: 1000, base_contracts: 1, profit_step: 1000, max_contracts: 20 });
+  res.json(found.rows[0] || {
+    daily_stop: 500,
+    daily_target: 1000,
+    base_contracts: 1,
+    profit_step: 1000,
+    max_contracts: 20,
+  });
 });
 
 app.put('/projects/:slug/settings', requireAuth, async (req, res) => {
   const ctx = await ensureProjectAccess(req, res); if (!ctx) return;
   const values = {
-    daily_stop: Number(req.body?.daily_stop), daily_target: Number(req.body?.daily_target),
-    base_contracts: Number(req.body?.base_contracts), profit_step: Number(req.body?.profit_step), max_contracts: Number(req.body?.max_contracts),
+    daily_stop: Number(req.body?.daily_stop),
+    daily_target: Number(req.body?.daily_target),
+    base_contracts: Number(req.body?.base_contracts),
+    profit_step: Number(req.body?.profit_step),
+    max_contracts: Number(req.body?.max_contracts),
   };
-  if (![values.daily_stop,values.daily_target,values.profit_step].every(v => Number.isFinite(v) && v > 0) || ![values.base_contracts,values.max_contracts].every(v => Number.isInteger(v) && v > 0) || values.max_contracts < values.base_contracts) return res.status(400).json({ error: 'invalid_settings' });
+  if (
+    ![values.daily_stop, values.daily_target, values.profit_step].every(v => Number.isFinite(v) && v > 0) ||
+    ![values.base_contracts, values.max_contracts].every(v => Number.isInteger(v) && v > 0) ||
+    values.max_contracts < values.base_contracts
+  ) {
+    return res.status(400).json({ error: 'invalid_settings' });
+  }
   const saved = await query(
     `insert into trading_settings(project_id,user_id,daily_stop,daily_target,base_contracts,profit_step,max_contracts)
      values($1,$2,$3,$4,$5,$6,$7)
-     on conflict(project_id,user_id) do update set daily_stop=excluded.daily_stop,daily_target=excluded.daily_target,base_contracts=excluded.base_contracts,profit_step=excluded.profit_step,max_contracts=excluded.max_contracts,updated_at=now()
+     on conflict(project_id,user_id) do update set
+       daily_stop=excluded.daily_stop,
+       daily_target=excluded.daily_target,
+       base_contracts=excluded.base_contracts,
+       profit_step=excluded.profit_step,
+       max_contracts=excluded.max_contracts,
+       updated_at=now()
      returning *`,
     [ctx.membership.id, req.user.sub, values.daily_stop, values.daily_target, values.base_contracts, values.profit_step, values.max_contracts]
   );
@@ -327,4 +439,4 @@ app.use((err, _req, res, _next) => {
 });
 
 const port = Number(process.env.PORT || 3000);
-app.listen(port, () => console.log(`Aureon Base v0.2.1 listening on :${port}`));
+app.listen(port, () => console.log(`Aureon Base v0.3.0 listening on :${port}`));
