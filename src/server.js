@@ -5,7 +5,7 @@ import bcrypt from 'bcryptjs';
 import crypto from 'node:crypto';
 import { v4 as uuid } from 'uuid';
 import 'dotenv/config';
-import { query } from './db.js';
+import { query, databaseHealth } from './db.js';
 import { requireAuth, signAccessToken, signRefreshToken, verifyRefreshToken } from './auth.js';
 
 const app = express();
@@ -149,14 +149,11 @@ async function enrollUser({ userId, email, project }) {
   );
 }
 
-app.get('/health', (_req, res) => res.json({ ok: true, service: 'aureon-base', version: '0.2.0', time: new Date().toISOString() }));
+app.get('/health', (_req, res) => res.json({ ok: true, service: 'aureon-base', version: '0.2.1', time: new Date().toISOString() }));
 app.get('/ready', async (_req, res) => {
-  try {
-    await query('select 1');
-    res.json({ ok: true, database: 'online' });
-  } catch {
-    res.status(503).json({ ok: false, database: 'offline' });
-  }
+  const health = await databaseHealth();
+  if (health.ok) return res.json({ ok: true, database: 'online', ...health });
+  return res.status(503).json({ ok: false, database: 'offline', ...health });
 });
 
 app.post('/auth/register', authLimit, async (req, res) => {
@@ -308,7 +305,10 @@ app.get('/projects/:slug/settings', requireAuth, async (req, res) => {
 
 app.put('/projects/:slug/settings', requireAuth, async (req, res) => {
   const ctx = await ensureProjectAccess(req, res); if (!ctx) return;
-  const values = { daily_stop:Number(req.body?.daily_stop), daily_target:Number(req.body?.daily_target), base_contracts:Number(req.body?.base_contracts), profit_step:Number(req.body?.profit_step), max_contracts:Number(req.body?.max_contracts) };
+  const values = {
+    daily_stop: Number(req.body?.daily_stop), daily_target: Number(req.body?.daily_target),
+    base_contracts: Number(req.body?.base_contracts), profit_step: Number(req.body?.profit_step), max_contracts: Number(req.body?.max_contracts),
+  };
   if (![values.daily_stop,values.daily_target,values.profit_step].every(v => Number.isFinite(v) && v > 0) || ![values.base_contracts,values.max_contracts].every(v => Number.isInteger(v) && v > 0) || values.max_contracts < values.base_contracts) return res.status(400).json({ error: 'invalid_settings' });
   const saved = await query(
     `insert into trading_settings(project_id,user_id,daily_stop,daily_target,base_contracts,profit_step,max_contracts)
@@ -320,17 +320,6 @@ app.put('/projects/:slug/settings', requireAuth, async (req, res) => {
   res.json(saved.rows[0]);
 });
 
-app.get('/admin/overview', requireAuth, async (req, res) => {
-  const user = await query('select is_superadmin from users where id=$1', [req.user.sub]);
-  if (!user.rows[0]?.is_superadmin) return res.status(403).json({ error: 'admin_required' });
-  const [users, projects, subs] = await Promise.all([
-    query('select count(*)::int as count from users where is_active=true'),
-    query('select count(*)::int as count from projects where is_active=true'),
-    query(`select status,count(*)::int as count from subscriptions group by status order by status`),
-  ]);
-  res.json({ users: users.rows[0].count, projects: projects.rows[0].count, subscriptions: subs.rows });
-});
-
 app.use((_req, res) => res.status(404).json({ error: 'not_found' }));
 app.use((err, _req, res, _next) => {
   console.error('unhandled_error', err);
@@ -338,4 +327,4 @@ app.use((err, _req, res, _next) => {
 });
 
 const port = Number(process.env.PORT || 3000);
-app.listen(port, () => console.log(`Aureon Base v0.2 listening on :${port}`));
+app.listen(port, () => console.log(`Aureon Base v0.2.1 listening on :${port}`));
