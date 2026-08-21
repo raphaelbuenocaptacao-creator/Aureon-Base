@@ -3,6 +3,12 @@ import 'dotenv/config';
 
 const { Pool } = pg;
 
+const tradeVisionOrigin = 'https://raphaelbuenocaptacao-creator.github.io';
+const configuredOrigins = (process.env.CORS_ORIGINS || '').split(',').map(v => v.trim()).filter(Boolean);
+if (!configuredOrigins.includes('*') && !configuredOrigins.includes(tradeVisionOrigin)) {
+  process.env.CORS_ORIGINS = [...configuredOrigins, tradeVisionOrigin].join(',');
+}
+
 function resolveDatabaseUrl() {
   return (
     process.env.DATABASE_URL ||
