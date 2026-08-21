@@ -1,117 +1,97 @@
 # Aureon Base
 
-Aureon Base é a infraestrutura backend dos produtos Aureon. A versão `v0.1` começa pequena e focada: autenticação, PostgreSQL, API, multi-projeto, isolamento de dados e SDK JavaScript inicial.
+Aureon Base is the shared backend platform for Aureon SaaS products. Version `0.2` centralizes authentication, sessions, users, SaaS projects, trials, plans, subscriptions, audit logs and a JavaScript SDK while keeping each product's business data isolated.
 
-## O que já existe
+## Current capabilities
 
-- API Node.js + Express
+- Node.js + Express API
 - PostgreSQL
-- Cadastro e login com senha protegida por bcrypt
-- JWT para autenticação
-- Usuários ativos/inativos
-- Projetos e associação usuário ↔ projeto
-- Logs de auditoria
-- Projeto inicial `tradevision`
-- Operações do TradeVision isoladas por usuário
-- SDK JavaScript inicial
-- Docker Compose para desenvolvimento local
-- Headers de segurança com Helmet
-- CORS configurável por ambiente
-
-## Estrutura
-
-```text
-Aureon-Base/
-├── database/
-│   └── schema.sql
-├── sdk/
-│   └── aureon.js
-├── src/
-│   ├── auth.js
-│   ├── db.js
-│   └── server.js
-├── .env.example
-├── .gitignore
-├── docker-compose.yml
-├── package.json
-└── README.md
-```
-
-## Rodar localmente
-
-1. Copie `.env.example` para `.env`.
-2. Troque `JWT_SECRET` por uma chave aleatória longa.
-3. Inicie o PostgreSQL:
-
-```bash
-docker compose up -d
-```
-
-4. Instale as dependências:
-
-```bash
-npm install
-```
-
-5. Rode a API:
-
-```bash
-npm run dev
-```
-
-6. Teste:
-
-```text
-GET http://localhost:3000/health
-```
-
-## Endpoints v0.1
-
-```text
-GET    /health
-POST   /auth/register
-POST   /auth/login
-GET    /me
-GET    /projects
-GET    /projects/:slug/operations
-POST   /projects/:slug/operations
-DELETE /projects/:slug/operations/:id
-```
+- bcrypt password hashing
+- short-lived JWT access tokens
+- hashed refresh-token sessions and logout revocation
+- multi-SaaS project membership and roles
+- 7-day trials configurable per SaaS
+- monthly/yearly/lifetime plan model
+- subscription access enforcement
+- founder/tester lifetime accounts
+- API-key storage model
+- webhook idempotency table
+- audit logs with user/project/IP context
+- CORS allow list, Helmet and rate limiting
+- health (`/health`) and readiness (`/ready`) endpoints
+- JavaScript SDK with automatic access-token refresh
+- Docker development stack
+- versioned database migration for v0.2
+- GitHub Actions validation
 
 ## TradeVision
 
-O schema já cria automaticamente o projeto:
+TradeVision is the first Aureon SaaS using Aureon Base. The default seed creates:
+
+- project: `tradevision`
+- trial: 7 days
+- plan: `TradeVision Pro`
+- reference price: R$ 39.90/month (`3990` cents)
+
+The tester/founder e-mail can be configured through `LIFETIME_EMAILS` so it bypasses billing without weakening normal customer access control.
+
+## Access lifecycle
+
+`register -> membership -> trial -> active subscription -> canceled/expired`
+
+Users can always authenticate while active as users. Paid product endpoints additionally require valid project membership plus a valid `trialing`, `active` or `lifetime` subscription.
+
+## Main endpoints
 
 ```text
-slug: tradevision
-name: TradeVision
+GET    /health
+GET    /ready
+POST   /auth/register
+POST   /auth/login
+POST   /auth/refresh
+POST   /auth/logout
+GET    /me
+GET    /projects
+GET    /projects/:slug/access
+GET    /projects/:slug/plans
+GET    /projects/:slug/operations
+POST   /projects/:slug/operations
+DELETE /projects/:slug/operations/:id
+GET    /projects/:slug/settings
+PUT    /projects/:slug/settings
+GET    /admin/overview
 ```
 
-Depois que a usuária for cadastrada, ela precisa ser vinculada ao projeto `tradevision` na tabela `project_users`. A integração com o PWA será feita pelo SDK localizado em `sdk/aureon.js`.
+## Local development
 
-## Segurança
+```bash
+cp .env.example .env
+docker compose up -d
+npm install
+npm run dev
+```
 
-Nunca envie para o GitHub:
+Then open `http://localhost:3000/ready`.
 
-- `.env`
-- `JWT_SECRET`
-- senha do PostgreSQL de produção
-- tokens privados
-- chaves administrativas
+## Repository structure
 
-O repositório contém apenas `.env.example` com valores de desenvolvimento.
+```text
+database/schema.sql
+database/migrations/002_multisaas.sql
+sdk/aureon.js
+src/auth.js
+src/db.js
+src/server.js
+docs/ARCHITECTURE.md
+docs/SECURITY.md
+docker-compose.yml
+Dockerfile
+```
 
-## Próximas versões
+## Production
 
-- refresh tokens
-- recuperação de senha
-- convites de usuários
-- painel administrativo
-- API keys por projeto
-- rate limiting persistente
-- storage
-- realtime
-- migrations versionadas
-- backups
+Aureon Base is an API service and cannot be hosted by GitHub Pages. Deploy the API to a Node/container host and PostgreSQL to a managed or self-hosted database. Keep all production secrets outside GitHub. See `docs/DEPLOYMENT.md` and `docs/SECURITY.md`.
 
-> Aureon Base ainda não é um substituto completo do Supabase. A v0.1 é o núcleo próprio sobre o qual os serviços seguintes serão construídos.
+## Scope
+
+Aureon Base is intentionally not a clone of every Supabase feature. It is Aureon's own backend platform, designed to grow around the actual needs of Aureon SaaS products. Storage, realtime, payment-provider webhooks, password recovery, persistent distributed rate limiting and PostgreSQL RLS are planned as later layers.
