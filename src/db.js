@@ -7,6 +7,8 @@ function resolveDatabaseUrl() {
   return (
     process.env.DATABASE_URL ||
     process.env.DATABASE_URL_UNPOOLED ||
+    process.env.STORAGE_URL ||
+    process.env.STORAGE_URL_UNPOOLED ||
     process.env.POSTGRES_URL ||
     process.env.POSTGRES_URL_NON_POOLING ||
     process.env.NEON_DATABASE_URL ||
@@ -20,6 +22,8 @@ export const databaseConfig = {
   configured: Boolean(connectionString),
   source: process.env.DATABASE_URL ? 'DATABASE_URL'
     : process.env.DATABASE_URL_UNPOOLED ? 'DATABASE_URL_UNPOOLED'
+    : process.env.STORAGE_URL ? 'STORAGE_URL'
+    : process.env.STORAGE_URL_UNPOOLED ? 'STORAGE_URL_UNPOOLED'
     : process.env.POSTGRES_URL ? 'POSTGRES_URL'
     : process.env.POSTGRES_URL_NON_POOLING ? 'POSTGRES_URL_NON_POOLING'
     : process.env.NEON_DATABASE_URL ? 'NEON_DATABASE_URL'
