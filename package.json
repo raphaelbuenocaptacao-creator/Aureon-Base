@@ -1,13 +1,15 @@
 {
   "name": "aureon-base",
-  "version": "0.2.0",
+  "version": "0.2.1",
   "private": true,
   "type": "module",
   "engines": { "node": ">=20" },
   "scripts": {
     "dev": "node --watch src/server.js",
     "start": "node src/server.js",
-    "check": "node --check src/server.js && node --check src/auth.js && node --check src/db.js && node --check sdk/aureon.js",
+    "migrate": "node src/migrate.js",
+    "vercel-build": "npm run migrate",
+    "check": "node --check src/server.js && node --check src/auth.js && node --check src/db.js && node --check src/migrate.js && node --check sdk/aureon.js",
     "test": "npm run check"
   },
   "dependencies": {
