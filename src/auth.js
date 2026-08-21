@@ -17,6 +17,17 @@ function safeExpiry(value, fallback) {
 const accessExpiresIn = safeExpiry(process.env.JWT_EXPIRES_IN, '30m');
 const refreshExpiresIn = safeExpiry(process.env.JWT_REFRESH_EXPIRES_IN, '30d');
 
+// `server.js` expects REFRESH_TOKEN_DAYS to be a plain number because it is
+// interpolated as a PostgreSQL interval. Normalize bad values such as `30d`,
+// empty strings or NaN so a successful password check can never fail while
+// creating the session row.
+const configuredRefreshDays = Number(process.env.REFRESH_TOKEN_DAYS);
+if (!Number.isFinite(configuredRefreshDays) || configuredRefreshDays < 1 || configuredRefreshDays > 365) {
+  process.env.REFRESH_TOKEN_DAYS = '30';
+} else {
+  process.env.REFRESH_TOKEN_DAYS = String(Math.trunc(configuredRefreshDays));
+}
+
 export function signAccessToken(user) {
   return jwt.sign(
     { sub: user.id, email: user.email, type: 'access' },
