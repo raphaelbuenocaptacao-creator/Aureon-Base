@@ -1,18 +1,27 @@
 import jwt from 'jsonwebtoken';
 import 'dotenv/config';
 
-const accessSecret = process.env.JWT_SECRET;
-const refreshSecret = process.env.JWT_REFRESH_SECRET || process.env.JWT_SECRET;
+const accessSecret = String(process.env.JWT_SECRET || '');
+const configuredRefreshSecret = String(process.env.JWT_REFRESH_SECRET || '');
+const refreshSecret = configuredRefreshSecret.length >= 32 ? configuredRefreshSecret : accessSecret;
 
 if (!accessSecret || accessSecret.length < 32) {
   throw new Error('JWT_SECRET must be configured with at least 32 characters');
 }
 
+function safeExpiry(value, fallback) {
+  const text = String(value || '').trim();
+  return /^\d+[smhdwy]$/i.test(text) ? text : fallback;
+}
+
+const accessExpiresIn = safeExpiry(process.env.JWT_EXPIRES_IN, '30m');
+const refreshExpiresIn = safeExpiry(process.env.JWT_REFRESH_EXPIRES_IN, '30d');
+
 export function signAccessToken(user) {
   return jwt.sign(
     { sub: user.id, email: user.email, type: 'access' },
     accessSecret,
-    { expiresIn: process.env.JWT_EXPIRES_IN || '30m', issuer: 'aureon-base', audience: 'aureon-apps' }
+    { expiresIn: accessExpiresIn, issuer: 'aureon-base', audience: 'aureon-apps', algorithm: 'HS256' }
   );
 }
 
@@ -20,12 +29,16 @@ export function signRefreshToken(user, sessionId) {
   return jwt.sign(
     { sub: user.id, sid: sessionId, type: 'refresh' },
     refreshSecret,
-    { expiresIn: process.env.JWT_REFRESH_EXPIRES_IN || '30d', issuer: 'aureon-base', audience: 'aureon-apps' }
+    { expiresIn: refreshExpiresIn, issuer: 'aureon-base', audience: 'aureon-apps', algorithm: 'HS256' }
   );
 }
 
 export function verifyRefreshToken(token) {
-  const payload = jwt.verify(token, refreshSecret, { issuer: 'aureon-base', audience: 'aureon-apps' });
+  const payload = jwt.verify(token, refreshSecret, {
+    issuer: 'aureon-base',
+    audience: 'aureon-apps',
+    algorithms: ['HS256'],
+  });
   if (payload.type !== 'refresh') throw new Error('invalid_token_type');
   return payload;
 }
@@ -36,7 +49,11 @@ export function requireAuth(req, res, next) {
   if (!token) return res.status(401).json({ error: 'missing_token' });
 
   try {
-    const payload = jwt.verify(token, accessSecret, { issuer: 'aureon-base', audience: 'aureon-apps' });
+    const payload = jwt.verify(token, accessSecret, {
+      issuer: 'aureon-base',
+      audience: 'aureon-apps',
+      algorithms: ['HS256'],
+    });
     if (payload.type !== 'access') return res.status(401).json({ error: 'invalid_token_type' });
     req.user = payload;
     next();
