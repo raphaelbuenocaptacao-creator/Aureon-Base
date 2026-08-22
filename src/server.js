@@ -18,10 +18,7 @@ const builtInOrigins = [
   'http://localhost:5500',
   'http://127.0.0.1:5500',
 ];
-const configuredOrigins = (process.env.CORS_ORIGINS || '')
-  .split(',')
-  .map(v => v.trim())
-  .filter(Boolean);
+const configuredOrigins = (process.env.CORS_ORIGINS || '').split(',').map(v => v.trim()).filter(Boolean);
 const corsOrigins = new Set([...builtInOrigins, ...configuredOrigins]);
 app.use(cors({
   origin(origin, cb) {
@@ -55,6 +52,7 @@ setInterval(() => {
 }, 60_000).unref();
 
 const authLimit = rateLimit({ windowMs: 15 * 60_000, max: 20 });
+const resetRequestLimit = rateLimit({ windowMs: 15 * 60_000, max: 5 });
 const apiLimit = rateLimit({ windowMs: 60_000, max: 180 });
 app.use(apiLimit);
 
@@ -70,6 +68,29 @@ function recoveryCode(user, slot = Math.floor(Date.now() / resetWindowMs)) {
   const digest = crypto.createHmac('sha256', secret).update(`${user.id}:${version}:${slot}`).digest('hex');
   const number = Number.parseInt(digest.slice(0, 12), 16) % 100000000;
   return String(number).padStart(8, '0');
+}
+
+async function sendRecoveryEmail(email, code) {
+  const apiKey = String(process.env.RESEND_API_KEY || '').trim();
+  const from = String(process.env.MAIL_FROM || 'TradeVision <onboarding@resend.dev>').trim();
+  if (!apiKey) return false;
+  try {
+    const response = await fetch('https://api.resend.com/emails', {
+      method: 'POST',
+      headers: { 'Authorization': `Bearer ${apiKey}`, 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        from,
+        to: [email],
+        subject: 'Seu código de recuperação do TradeVision',
+        html: `<div style="font-family:Arial,sans-serif;background:#0b1117;color:#e8eef3;padding:28px"><div style="max-width:520px;margin:auto;background:#111b24;border:1px solid #263746;border-radius:14px;padding:28px"><h2 style="margin-top:0">TradeVision</h2><p>Recebemos uma solicitação para redefinir sua senha.</p><p style="font-size:34px;letter-spacing:7px;font-weight:700;color:#00a8d6">${code}</p><p>Esse código é válido por aproximadamente 10 minutos.</p><p style="color:#8293a1;font-size:13px">Se você não solicitou a alteração, ignore este e-mail.</p></div></div>`,
+      }),
+    });
+    if (!response.ok) console.error('recovery_email_error', response.status);
+    return response.ok;
+  } catch (err) {
+    console.error('recovery_email_error', err.message);
+    return false;
+  }
 }
 
 async function requireSuperAdmin(req, res, next) {
@@ -149,7 +170,7 @@ async function enrollUser({ userId, email, project }) {
   await query(`insert into subscriptions(project_id,user_id,status,trial_started_at,trial_ends_at) values($1,$2,'trialing',now(),now()+($3 || ' days')::interval) on conflict(project_id,user_id) do nothing`, [project.id, userId, String(project.trial_days)]);
 }
 
-app.get('/health', (_req, res) => res.json({ ok: true, service: 'aureon-base', version: '0.4.0', time: new Date().toISOString() }));
+app.get('/health', (_req, res) => res.json({ ok: true, service: 'aureon-base', version: '0.5.0', time: new Date().toISOString() }));
 app.get('/ready', async (_req, res) => {
   const health = await databaseHealth();
   if (health.ok) return res.json({ ok: true, database: 'online', ...health });
@@ -243,6 +264,24 @@ app.post('/auth/change-password', authLimit, requireAuth, async (req, res) => {
   }
 });
 
+app.post('/auth/request-password-reset', resetRequestLimit, async (req, res) => {
+  const email = String(req.body?.email || '').trim().toLowerCase();
+  if (!emailRegex.test(email)) return res.status(202).json({ ok: true });
+  try {
+    const found = await query('select id,email,password_hash,is_active from users where email=$1', [email]);
+    const user = found.rows[0];
+    if (!user || !user.is_active) return res.status(202).json({ ok: true });
+    const code = recoveryCode(user);
+    const sent = await sendRecoveryEmail(user.email, code);
+    await audit({ userId: user.id, event: 'user.password_reset_requested', req, metadata: { delivered: sent } });
+    if (!sent) return res.status(503).json({ error: 'email_service_unavailable' });
+    return res.status(202).json({ ok: true });
+  } catch (err) {
+    console.error('request_password_reset_error', err);
+    return res.status(500).json({ error: 'internal_error' });
+  }
+});
+
 app.post('/auth/reset-password', authLimit, async (req, res) => {
   const email = String(req.body?.email || '').trim().toLowerCase();
   const code = String(req.body?.code || '').replace(/\D/g, '');
@@ -302,8 +341,7 @@ app.post('/admin/users/:userId/reset-code', requireAuth, requireSuperAdmin, asyn
   const found = await query('select id,email,password_hash,is_active from users where id=$1', [req.params.userId]);
   const user = found.rows[0];
   if (!user || !user.is_active) return res.status(404).json({ error: 'user_not_found' });
-  const slot = Math.floor(Date.now() / resetWindowMs);
-  const code = recoveryCode(user, slot);
+  const code = recoveryCode(user);
   await audit({ userId: req.user.sub, event: 'admin.reset_code_generated', req, metadata: { target_user_id: user.id } });
   res.json({ email: user.email, code, expires_in_minutes: 10 });
 });
@@ -383,4 +421,4 @@ app.use((err, _req, res, _next) => {
 });
 
 const port = Number(process.env.PORT || 3000);
-app.listen(port, () => console.log(`Aureon Base v0.4.0 listening on :${port}`));
+app.listen(port, () => console.log(`Aureon Base v0.5.0 listening on :${port}`));
