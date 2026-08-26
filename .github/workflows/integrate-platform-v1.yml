@@ -19,51 +19,41 @@ jobs:
       - uses: actions/setup-node@v4
         with:
           node-version: 22
-      - name: Integrate platform routes permanently
+      - name: Finalize platform source
         run: |
           python - <<'PY'
           from pathlib import Path
-
-          p = Path('src/server.js')
-          s = p.read_text()
-
-          auth_anchor = "import { requireAuth, signAccessToken, signRefreshToken, verifyRefreshToken } from './auth.js';\n"
-          data_import = "import { registerPlatformDataRoutes } from './platformData.js';\n"
-          admin_import = "import { registerPlatformAdminRoutes } from './platformAdmin.js';\n"
-          console_import = "import { registerConsoleRoutes } from './console.js';\n"
-          if data_import not in s:
-              s = s.replace(auth_anchor, auth_anchor + data_import)
-          if admin_import not in s:
-              s = s.replace(data_import, data_import + admin_import)
-          if console_import not in s:
-              s = s.replace(admin_import, admin_import + console_import)
-
-          console_registration = "registerConsoleRoutes({ app });\n\n"
-          health_anchor = "app.get('/health', (_req, res) => res.json({ ok: true, service: 'aureon-base', version: '0.6.0', time: new Date().toISOString() }));"
-          if console_registration.strip() not in s:
-              s = s.replace(health_anchor, console_registration + health_anchor)
-
-          data_registration = """\nregisterPlatformDataRoutes({\n  app,\n  query,\n  requireAuth,\n  projectMembership,\n  subscriptionFor,\n  accessState,\n  audit,\n});\n\n"""
-          admin_registration = """registerPlatformAdminRoutes({\n  app,\n  query,\n  requireAuth,\n  requireSuperAdmin,\n  projectBySlug,\n  audit,\n});\n\n"""
-          not_found = "app.use((_req, res) => res.status(404).json({ error: 'not_found' }));"
-          if data_registration.strip() not in s:
-              s = s.replace(not_found, data_registration + not_found)
-          if admin_registration.strip() not in s:
-              s = s.replace(not_found, admin_registration + not_found)
-
-          s = s.replace("version: '0.5.0'", "version: '0.6.0'")
-          s = s.replace("Aureon Base v0.5.0 listening", "Aureon Base v0.6.0 listening")
-          p.write_text(s)
-
-          pkg = Path('package.json')
-          t = pkg.read_text()
-          t = t.replace('"version": "0.2.1"', '"version": "0.6.0"')
-          check = 'node --check src/server.js && node --check src/auth.js && node --check src/db.js && node --check src/migrate.js && node --check src/platformData.js && node --check src/platformAdmin.js && node --check src/console.js && node --check sdk/aureon.js && node --check sdk/aureon-v1.js'
           import json
-          data = json.loads(t)
+
+          p=Path('src/console.js')
+          s=p.read_text()
+          imp="import { runAureonConsole } from './consoleClient.js';\n\n"
+          if not s.startswith(imp):
+              s=imp+s
+          marker='export function registerConsoleRoutes({ app }) {'
+          if marker not in s:
+              raise SystemExit('Console route block not found')
+          prefix=s[:s.index(marker)]
+          for legacy in ['const consoleScriptMatch = page.match(', 'const consolePage = page.replace(']:
+              pos=prefix.find(legacy)
+              if pos!=-1:
+                  prefix=prefix[:pos]
+                  break
+          block="""const consolePage = page.replace(/<script>[\\s\\S]*?<\\/script>/, '<script src=\"/console/app.js\"></script>');
+
+export function registerConsoleRoutes({ app }) {
+  app.get('/', (_req, res) => res.type('html').send(consolePage));
+  app.get('/console', (_req, res) => res.type('html').send(consolePage));
+  app.get('/console/app.js', (_req, res) => res.type('application/javascript').send(`(${runAureonConsole.toString()})();`));
+}
+"""
+          p.write_text(prefix.rstrip()+"\n\n"+block)
+
+          pkg=Path('package.json')
+          data=json.loads(pkg.read_text())
           data['version']='0.6.0'
-          data['scripts']['check']=check
-          pkg.write_text(json.dumps(data, indent=2, ensure_ascii=False)+'\n')
+          data['scripts']['check']='node --check src/server.js && node --check src/auth.js && node --check src/db.js && node --check src/migrate.js && node --check src/platformData.js && node --check src/platformAdmin.js && node --check src/console.js && node --check src/consoleClient.js && node --check sdk/aureon.js && node --check sdk/aureon-v1.js'
+          pkg.write_text(json.dumps(data,indent=2,ensure_ascii=False)+'\n')
           PY
       - name: Validate
         run: |
@@ -77,6 +67,6 @@ jobs:
           fi
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          git add src/server.js package.json
-          git commit -m "feat: integrate Aureon Base visual console [platform-v1-integrated]"
+          git add src/console.js package.json
+          git commit -m "feat: finalize Aureon Base V1 console [platform-v1-integrated]"
           git push
