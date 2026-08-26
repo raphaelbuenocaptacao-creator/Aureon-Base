@@ -7,6 +7,7 @@ import { v4 as uuid } from 'uuid';
 import 'dotenv/config';
 import { query, databaseHealth } from './db.js';
 import { requireAuth, signAccessToken, signRefreshToken, verifyRefreshToken } from './auth.js';
+import { registerPlatformDataRoutes } from './platformData.js';
 
 const app = express();
 app.disable('x-powered-by');
@@ -170,7 +171,7 @@ async function enrollUser({ userId, email, project }) {
   await query(`insert into subscriptions(project_id,user_id,status,trial_started_at,trial_ends_at) values($1,$2,'trialing',now(),now()+($3 || ' days')::interval) on conflict(project_id,user_id) do nothing`, [project.id, userId, String(project.trial_days)]);
 }
 
-app.get('/health', (_req, res) => res.json({ ok: true, service: 'aureon-base', version: '0.5.0', time: new Date().toISOString() }));
+app.get('/health', (_req, res) => res.json({ ok: true, service: 'aureon-base', version: '0.6.0', time: new Date().toISOString() }));
 app.get('/ready', async (_req, res) => {
   const health = await databaseHealth();
   if (health.ok) return res.json({ ok: true, database: 'online', ...health });
@@ -414,6 +415,17 @@ app.put('/projects/:slug/settings', requireAuth, async (req, res) => {
   res.json(saved.rows[0]);
 });
 
+
+registerPlatformDataRoutes({
+  app,
+  query,
+  requireAuth,
+  projectMembership,
+  subscriptionFor,
+  accessState,
+  audit,
+});
+
 app.use((_req, res) => res.status(404).json({ error: 'not_found' }));
 app.use((err, _req, res, _next) => {
   console.error('unhandled_error', err);
@@ -421,4 +433,4 @@ app.use((err, _req, res, _next) => {
 });
 
 const port = Number(process.env.PORT || 3000);
-app.listen(port, () => console.log(`Aureon Base v0.5.0 listening on :${port}`));
+app.listen(port, () => console.log(`Aureon Base v0.6.0 listening on :${port}`));
