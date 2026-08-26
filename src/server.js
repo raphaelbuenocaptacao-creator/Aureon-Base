@@ -8,6 +8,7 @@ import 'dotenv/config';
 import { query, databaseHealth } from './db.js';
 import { requireAuth, signAccessToken, signRefreshToken, verifyRefreshToken } from './auth.js';
 import { registerPlatformDataRoutes } from './platformData.js';
+import { registerPlatformAdminRoutes } from './platformAdmin.js';
 
 const app = express();
 app.disable('x-powered-by');
@@ -423,6 +424,15 @@ registerPlatformDataRoutes({
   projectMembership,
   subscriptionFor,
   accessState,
+  audit,
+});
+
+registerPlatformAdminRoutes({
+  app,
+  query,
+  requireAuth,
+  requireSuperAdmin,
+  projectBySlug,
   audit,
 });
 
