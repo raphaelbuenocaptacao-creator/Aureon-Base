@@ -28,6 +28,14 @@ export function registerPlatformDataRoutes({ app, query, requireAuth, projectMem
     return `and owner_user_id=$${index}`;
   }
 
+  function canWrite(ctx, col, res) {
+    if (!col.owner_scoped && !ctx.isAdmin) {
+      res.status(403).json({ error: 'admin_write_required' });
+      return false;
+    }
+    return true;
+  }
+
   app.get('/v1/projects/:slug/data/:collection', requireAuth, async (req, res) => {
     const ctx = await context(req, res); if (!ctx) return;
     const col = await collection(ctx, req.params.collection); if (!col) return res.status(404).json({ error: 'collection_not_found' });
@@ -58,6 +66,7 @@ export function registerPlatformDataRoutes({ app, query, requireAuth, projectMem
   app.post('/v1/projects/:slug/data/:collection', requireAuth, async (req, res) => {
     const ctx = await context(req, res); if (!ctx) return;
     const col = await collection(ctx, req.params.collection); if (!col) return res.status(404).json({ error: 'collection_not_found' });
+    if (!canWrite(ctx, col, res)) return;
     const data = req.body?.data;
     if (!data || Array.isArray(data) || typeof data !== 'object') return res.status(400).json({ error: 'invalid_record' });
     const id = uuid();
@@ -78,6 +87,7 @@ export function registerPlatformDataRoutes({ app, query, requireAuth, projectMem
   app.put('/v1/projects/:slug/data/:collection/:id', requireAuth, async (req, res) => {
     const ctx = await context(req, res); if (!ctx) return;
     const col = await collection(ctx, req.params.collection); if (!col) return res.status(404).json({ error: 'collection_not_found' });
+    if (!canWrite(ctx, col, res)) return;
     const data = req.body?.data;
     if (!data || Array.isArray(data) || typeof data !== 'object') return res.status(400).json({ error: 'invalid_record' });
     const params = [JSON.stringify(data), req.params.id, ctx.membership.id, col.name];
@@ -94,6 +104,7 @@ export function registerPlatformDataRoutes({ app, query, requireAuth, projectMem
   app.delete('/v1/projects/:slug/data/:collection/:id', requireAuth, async (req, res) => {
     const ctx = await context(req, res); if (!ctx) return;
     const col = await collection(ctx, req.params.collection); if (!col) return res.status(404).json({ error: 'collection_not_found' });
+    if (!canWrite(ctx, col, res)) return;
     const params = [req.params.id, ctx.membership.id, col.name];
     const ownerClause = ownerFilter(ctx, col, 4, params, req.user.sub);
     const deleted = await query(
