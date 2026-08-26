@@ -2,20 +2,14 @@ import { v4 as uuid } from 'uuid';
 
 const collectionName = /^[a-z][a-z0-9_]{1,62}$/;
 
-export function registerPlatformDataRoutes({ app, query, requireAuth, projectMembership, subscriptionFor, accessState, audit }) {
+export function registerPlatformDataRoutes({ app, query, requireAuth, projectMembership, audit }) {
   async function context(req, res) {
     const membership = await projectMembership(req.params.slug, req.user.sub);
     if (!membership || !membership.is_active) {
       res.status(403).json({ error: 'project_forbidden' });
       return null;
     }
-    const subscription = await subscriptionFor(membership.id, req.user.sub);
-    const access = accessState(subscription);
-    if (!access.allowed) {
-      res.status(402).json({ error: 'subscription_required', access });
-      return null;
-    }
-    return { membership, subscription, access };
+    return { membership };
   }
 
   async function collection(ctx, name) {
