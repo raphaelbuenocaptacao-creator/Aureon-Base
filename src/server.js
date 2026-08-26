@@ -9,6 +9,7 @@ import { query, databaseHealth } from './db.js';
 import { requireAuth, signAccessToken, signRefreshToken, verifyRefreshToken } from './auth.js';
 import { registerPlatformDataRoutes } from './platformData.js';
 import { registerPlatformAdminRoutes } from './platformAdmin.js';
+import { registerConsoleRoutes } from './console.js';
 
 const app = express();
 app.disable('x-powered-by');
@@ -171,6 +172,8 @@ async function enrollUser({ userId, email, project }) {
   }
   await query(`insert into subscriptions(project_id,user_id,status,trial_started_at,trial_ends_at) values($1,$2,'trialing',now(),now()+($3 || ' days')::interval) on conflict(project_id,user_id) do nothing`, [project.id, userId, String(project.trial_days)]);
 }
+
+registerConsoleRoutes({ app });
 
 app.get('/health', (_req, res) => res.json({ ok: true, service: 'aureon-base', version: '0.6.0', time: new Date().toISOString() }));
 app.get('/ready', async (_req, res) => {

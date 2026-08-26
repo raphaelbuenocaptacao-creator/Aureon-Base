@@ -3,13 +3,15 @@
   "version": "0.6.0",
   "private": true,
   "type": "module",
-  "engines": { "node": ">=20" },
+  "engines": {
+    "node": ">=20"
+  },
   "scripts": {
     "dev": "node --watch src/server.js",
     "start": "node src/server.js",
     "migrate": "node src/migrate.js",
     "vercel-build": "npm run migrate",
-    "check": "node --check src/server.js && node --check src/auth.js && node --check src/db.js && node --check src/migrate.js && node --check src/platformData.js && node --check src/platformAdmin.js && node --check sdk/aureon.js && node --check sdk/aureon-v1.js",
+    "check": "node --check src/server.js && node --check src/auth.js && node --check src/db.js && node --check src/migrate.js && node --check src/platformData.js && node --check src/platformAdmin.js && node --check src/console.js && node --check sdk/aureon.js && node --check sdk/aureon-v1.js",
     "test": "npm run check"
   },
   "dependencies": {
