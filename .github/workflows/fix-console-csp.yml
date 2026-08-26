@@ -1,5 +1,6 @@
 name: Fix Aureon Console CSP
 
+# One-time migration workflow; remove after successful patch.
 on:
   push:
     branches: [main]
