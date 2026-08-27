@@ -15,6 +15,14 @@ function safeExpiry(value, fallback) {
   return /^\d+[smhdwy]$/i.test(text) ? text : fallback;
 }
 
+function isUuid(value) {
+  return /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(String(value || ''));
+}
+
+function hasValidEmail(value) {
+  return typeof value === 'string' && value.length <= 320 && /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(value);
+}
+
 const accessExpiresIn = safeExpiry(process.env.JWT_EXPIRES_IN, '30m');
 const refreshExpiresIn = safeExpiry(process.env.JWT_REFRESH_EXPIRES_IN, '30d');
 
@@ -30,14 +38,22 @@ if (!Number.isFinite(configuredRefreshDays) || configuredRefreshDays < 1 || conf
 }
 
 export function signAccessToken(user) {
+  if (!isUuid(user?.id) || !hasValidEmail(user?.email)) throw new Error('invalid_user_claims');
   return jwt.sign(
     { sub: user.id, email: user.email, type: 'access' },
     accessSecret,
-    { expiresIn: accessExpiresIn, issuer: 'aureon-base', audience: 'aureon-apps', algorithm: 'HS256' }
+    {
+      expiresIn: accessExpiresIn,
+      issuer: 'aureon-base',
+      audience: 'aureon-apps',
+      algorithm: 'HS256',
+      jwtid: crypto.randomUUID(),
+    }
   );
 }
 
 export function signRefreshToken(user, sessionId) {
+  if (!isUuid(user?.id) || !isUuid(sessionId)) throw new Error('invalid_refresh_claims');
   return jwt.sign(
     { sub: user.id, sid: sessionId, type: 'refresh' },
     refreshSecret,
@@ -57,7 +73,9 @@ export function verifyRefreshToken(token) {
     audience: 'aureon-apps',
     algorithms: ['HS256'],
   });
-  if (payload.type !== 'refresh') throw new Error('invalid_token_type');
+  if (payload.type !== 'refresh' || !isUuid(payload.sub) || !isUuid(payload.sid) || !isUuid(payload.jti)) {
+    throw new Error('invalid_refresh_claims');
+  }
   return payload;
 }
 
@@ -72,7 +90,9 @@ export function requireAuth(req, res, next) {
       audience: 'aureon-apps',
       algorithms: ['HS256'],
     });
-    if (payload.type !== 'access') return res.status(401).json({ error: 'invalid_token_type' });
+    if (payload.type !== 'access' || !isUuid(payload.sub) || !isUuid(payload.jti) || !hasValidEmail(payload.email)) {
+      return res.status(401).json({ error: 'invalid_token_claims' });
+    }
     req.user = payload;
     next();
   } catch {
