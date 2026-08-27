@@ -5,6 +5,7 @@ import 'dotenv/config';
 const accessSecret = String(process.env.JWT_SECRET || '');
 const configuredRefreshSecret = String(process.env.JWT_REFRESH_SECRET || '');
 const refreshSecret = configuredRefreshSecret.length >= 32 ? configuredRefreshSecret : accessSecret;
+const MAX_JWT_LENGTH = 4096;
 
 if (!accessSecret || accessSecret.length < 32) {
   throw new Error('JWT_SECRET must be configured with at least 32 characters');
@@ -21,6 +22,12 @@ function isUuid(value) {
 
 function hasValidEmail(value) {
   return typeof value === 'string' && value.length <= 320 && /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(value);
+}
+
+function isPlausibleJwt(value) {
+  if (typeof value !== 'string' || value.length < 20 || value.length > MAX_JWT_LENGTH) return false;
+  const parts = value.split('.');
+  return parts.length === 3 && parts.every(part => part.length > 0);
 }
 
 const accessExpiresIn = safeExpiry(process.env.JWT_EXPIRES_IN, '30m');
@@ -68,6 +75,7 @@ export function signRefreshToken(user, sessionId) {
 }
 
 export function verifyRefreshToken(token) {
+  if (!isPlausibleJwt(token)) throw new Error('invalid_refresh_token_shape');
   const payload = jwt.verify(token, refreshSecret, {
     issuer: 'aureon-base',
     audience: 'aureon-apps',
@@ -80,9 +88,10 @@ export function verifyRefreshToken(token) {
 }
 
 export function requireAuth(req, res, next) {
-  const header = req.headers.authorization || '';
-  const token = header.startsWith('Bearer ') ? header.slice(7) : null;
+  const header = typeof req.headers.authorization === 'string' ? req.headers.authorization : '';
+  const token = header.startsWith('Bearer ') ? header.slice(7).trim() : '';
   if (!token) return res.status(401).json({ error: 'missing_token' });
+  if (!isPlausibleJwt(token)) return res.status(401).json({ error: 'invalid_token' });
 
   try {
     const payload = jwt.verify(token, accessSecret, {
