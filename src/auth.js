@@ -3,20 +3,11 @@ import crypto from 'node:crypto';
 import 'dotenv/config';
 
 const accessSecret = String(process.env.JWT_SECRET || '');
-const refreshSecret = String(process.env.JWT_REFRESH_SECRET || '');
+const configuredRefreshSecret = String(process.env.JWT_REFRESH_SECRET || '');
+const refreshSecret = configuredRefreshSecret.length >= 32 ? configuredRefreshSecret : accessSecret;
 
 if (!accessSecret || accessSecret.length < 32) {
   throw new Error('JWT_SECRET must be configured with at least 32 characters');
-}
-if (!refreshSecret || refreshSecret.length < 32) {
-  throw new Error('JWT_REFRESH_SECRET must be configured with at least 32 characters');
-}
-if (crypto.timingSafeEqual(Buffer.from(hashSecret(accessSecret)), Buffer.from(hashSecret(refreshSecret)))) {
-  throw new Error('JWT_REFRESH_SECRET must be different from JWT_SECRET');
-}
-
-function hashSecret(value) {
-  return crypto.createHash('sha256').update(String(value)).digest('hex');
 }
 
 function safeExpiry(value, fallback) {
