@@ -1,4 +1,5 @@
 import jwt from 'jsonwebtoken';
+import crypto from 'node:crypto';
 import 'dotenv/config';
 
 const accessSecret = String(process.env.JWT_SECRET || '');
@@ -40,7 +41,13 @@ export function signRefreshToken(user, sessionId) {
   return jwt.sign(
     { sub: user.id, sid: sessionId, type: 'refresh' },
     refreshSecret,
-    { expiresIn: refreshExpiresIn, issuer: 'aureon-base', audience: 'aureon-apps', algorithm: 'HS256' }
+    {
+      expiresIn: refreshExpiresIn,
+      issuer: 'aureon-base',
+      audience: 'aureon-apps',
+      algorithm: 'HS256',
+      jwtid: crypto.randomUUID(),
+    }
   );
 }
 
