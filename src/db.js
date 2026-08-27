@@ -22,7 +22,23 @@ function resolveDatabaseUrl() {
   );
 }
 
-const connectionString = resolveDatabaseUrl();
+function normalizeProductionSslMode(value) {
+  if (!value || process.env.NODE_ENV !== 'production') return value;
+
+  try {
+    const url = new URL(value);
+    const sslMode = url.searchParams.get('sslmode');
+    if (['prefer', 'require', 'verify-ca'].includes(sslMode)) {
+      url.searchParams.set('sslmode', 'verify-full');
+    }
+    return url.toString();
+  } catch {
+    return value;
+  }
+}
+
+const rawConnectionString = resolveDatabaseUrl();
+const connectionString = normalizeProductionSslMode(rawConnectionString);
 
 export const databaseConfig = {
   configured: Boolean(connectionString),
@@ -38,9 +54,6 @@ export const databaseConfig = {
 
 export const pool = new Pool({
   connectionString: connectionString || undefined,
-  ssl: process.env.NODE_ENV === 'production' && connectionString
-    ? { rejectUnauthorized: false }
-    : false,
   max: Number(process.env.DB_POOL_MAX || 5),
   idleTimeoutMillis: 30_000,
   connectionTimeoutMillis: 10_000,
