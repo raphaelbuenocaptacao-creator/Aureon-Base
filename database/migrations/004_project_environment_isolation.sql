@@ -18,32 +18,17 @@ where r.environment_id is null
   and e.project_id = r.project_id
   and e.name = 'production';
 
-do $$
-begin
-  if not exists (
-    select 1
-    from pg_constraint
-    where conname = 'project_environments_project_id_id_key'
-  ) then
-    alter table project_environments
-      add constraint project_environments_project_id_id_key unique(project_id,id);
-  end if;
-end $$;
+create unique index if not exists uq_project_environments_project_id_id
+  on project_environments(project_id,id);
 
-do $$
-begin
-  if not exists (
-    select 1
-    from pg_constraint
-    where conname = 'project_records_project_environment_fk'
-  ) then
-    alter table project_records
-      add constraint project_records_project_environment_fk
-      foreign key(project_id,environment_id)
-      references project_environments(project_id,id)
-      on delete cascade;
-  end if;
-end $$;
+alter table project_records
+  drop constraint if exists project_records_project_environment_fk;
+
+alter table project_records
+  add constraint project_records_project_environment_fk
+  foreign key(project_id,environment_id)
+  references project_environments(project_id,id)
+  on delete cascade;
 
 alter table project_records
   alter column environment_id set not null;
