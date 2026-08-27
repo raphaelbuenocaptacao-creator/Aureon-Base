@@ -1,5 +1,10 @@
+import crypto from 'node:crypto';
+
 const slugPattern = /^[a-z][a-z0-9-]{1,62}$/;
 const collectionPattern = /^[a-z][a-z0-9_]{1,62}$/;
+const keyNamePattern = /^[A-Za-z0-9 _.-]{2,80}$/;
+const allowedScopes = new Set(['read', 'write', 'admin']);
+const hashKey = value => crypto.createHash('sha256').update(String(value)).digest('hex');
 
 export function registerPlatformAdminRoutes({ app, query, requireAuth, requireSuperAdmin, projectBySlug, audit }) {
   app.get('/v1/admin/overview', requireAuth, requireSuperAdmin, async (_req, res) => {
@@ -54,6 +59,20 @@ export function registerPlatformAdminRoutes({ app, query, requireAuth, requireSu
     }
   });
 
+  app.get('/v1/admin/projects/:slug/environments', requireAuth, requireSuperAdmin, async (req, res) => {
+    const project = await projectBySlug(req.params.slug);
+    if (!project) return res.status(404).json({ error: 'project_not_found' });
+    const result = await query(`
+      select e.id,e.name,e.is_active,e.created_at,count(r.id)::int as records
+      from project_environments e
+      left join project_records r on r.project_id=e.project_id and r.environment_id=e.id
+      where e.project_id=$1
+      group by e.id
+      order by case e.name when 'production' then 1 when 'preview' then 2 else 3 end
+    `, [project.id]);
+    res.json(result.rows);
+  });
+
   app.get('/v1/admin/projects/:slug/collections', requireAuth, requireSuperAdmin, async (req, res) => {
     const project = await projectBySlug(req.params.slug);
     if (!project) return res.status(404).json({ error: 'project_not_found' });
@@ -102,6 +121,54 @@ export function registerPlatformAdminRoutes({ app, query, requireAuth, requireSu
     if (!saved.rows[0]) return res.status(404).json({ error: 'collection_not_found' });
     await audit({ userId: req.user.sub, projectId: project.id, event: 'platform.collection.updated', req, metadata: { collection: name } });
     res.json(saved.rows[0]);
+  });
+
+  app.get('/v1/admin/projects/:slug/keys', requireAuth, requireSuperAdmin, async (req, res) => {
+    const project = await projectBySlug(req.params.slug);
+    if (!project) return res.status(404).json({ error: 'project_not_found' });
+    const result = await query(`
+      select id,name,key_prefix,scopes,is_active,last_used_at,expires_at,created_at
+      from api_keys
+      where project_id=$1
+      order by created_at desc
+    `, [project.id]);
+    res.json(result.rows);
+  });
+
+  app.post('/v1/admin/projects/:slug/keys', requireAuth, requireSuperAdmin, async (req, res) => {
+    const project = await projectBySlug(req.params.slug);
+    if (!project) return res.status(404).json({ error: 'project_not_found' });
+    const name = String(req.body?.name || '').trim();
+    const requestedScopes = Array.isArray(req.body?.scopes) ? req.body.scopes.map(v => String(v).trim().toLowerCase()) : ['read'];
+    const scopes = [...new Set(requestedScopes)].filter(v => allowedScopes.has(v));
+    if (!keyNamePattern.test(name) || scopes.length === 0 || scopes.length !== new Set(requestedScopes).size) {
+      return res.status(400).json({ error: 'invalid_api_key' });
+    }
+    const expiresAt = req.body?.expires_at ? new Date(req.body.expires_at) : null;
+    if (expiresAt && Number.isNaN(expiresAt.getTime())) return res.status(400).json({ error: 'invalid_expiration' });
+    const secret = crypto.randomBytes(32).toString('base64url');
+    const prefix = crypto.randomBytes(5).toString('hex');
+    const apiKey = `ab_${prefix}_${secret}`;
+    const saved = await query(
+      `insert into api_keys(project_id,name,key_prefix,key_hash,scopes,expires_at)
+       values($1,$2,$3,$4,$5,$6)
+       returning id,name,key_prefix,scopes,is_active,expires_at,created_at`,
+      [project.id, name, `ab_${prefix}`, hashKey(apiKey), scopes, expiresAt ? expiresAt.toISOString() : null],
+    );
+    await audit({ userId: req.user.sub, projectId: project.id, event: 'platform.api_key.created', req, metadata: { key_id: saved.rows[0].id, name, scopes } });
+    res.status(201).json({ ...saved.rows[0], api_key: apiKey, warning: 'save_this_key_now_it_will_not_be_shown_again' });
+  });
+
+  app.delete('/v1/admin/projects/:slug/keys/:id', requireAuth, requireSuperAdmin, async (req, res) => {
+    const project = await projectBySlug(req.params.slug);
+    if (!project) return res.status(404).json({ error: 'project_not_found' });
+    const revoked = await query(
+      'update api_keys set is_active=false where id=$1 and project_id=$2 and is_active=true returning id,name,key_prefix',
+      [req.params.id, project.id],
+    );
+    if (!revoked.rows[0]) return res.status(404).json({ error: 'api_key_not_found' });
+    await audit({ userId: req.user.sub, projectId: project.id, event: 'platform.api_key.revoked', req, metadata: { key_id: req.params.id } });
+    res.status(204).end();
   });
 
   app.get('/v1/admin/projects/:slug/logs', requireAuth, requireSuperAdmin, async (req, res) => {
