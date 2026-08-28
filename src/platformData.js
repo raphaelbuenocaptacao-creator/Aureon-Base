@@ -70,6 +70,11 @@ export function registerPlatformDataRoutes({ app, query, requireAuth, projectMem
     return true;
   }
 
+  const recordsQuery = (ctx, userId, operation) => withTenantContext(
+    { userId, projectId: ctx.membership.id },
+    operation,
+  );
+
   app.get('/v1/projects/:slug/data/:collection', requireAuth, async (req, res) => {
     const ctx = await context(req, res); if (!ctx) return;
     const col = await collection(ctx, req.params.collection); if (!col) return res.status(404).json({ error: 'collection_not_found' });
@@ -78,10 +83,10 @@ export function registerPlatformDataRoutes({ app, query, requireAuth, projectMem
     const offset = Math.max(Number(req.query.offset || 0), 0);
     const params = [ctx.membership.id, env.id, col.name, limit, offset];
     const ownerClause = ownerFilter(ctx, col, 6, params, req.user.sub);
-    const result = await query(
+    const result = await recordsQuery(ctx, req.user.sub, scopedQuery => scopedQuery(
       `select id,data,owner_user_id,created_at,updated_at from project_records where project_id=$1 and environment_id=$2 and collection=$3 ${ownerClause} order by created_at desc limit $4 offset $5`,
       params,
-    );
+    ));
     res.json(result.rows);
   });
 
@@ -91,10 +96,10 @@ export function registerPlatformDataRoutes({ app, query, requireAuth, projectMem
     const env = await environment(ctx, req, res); if (!env) return;
     const params = [req.params.id, ctx.membership.id, env.id, col.name];
     const ownerClause = ownerFilter(ctx, col, 5, params, req.user.sub);
-    const found = await query(
+    const found = await recordsQuery(ctx, req.user.sub, scopedQuery => scopedQuery(
       `select id,data,owner_user_id,created_at,updated_at from project_records where id=$1 and project_id=$2 and environment_id=$3 and collection=$4 ${ownerClause}`,
       params,
-    );
+    ));
     if (!found.rows[0]) return res.status(404).json({ error: 'record_not_found' });
     res.json(found.rows[0]);
   });
@@ -113,10 +118,10 @@ export function registerPlatformDataRoutes({ app, query, requireAuth, projectMem
       const member = await query('select 1 from project_users where project_id=$1 and user_id=$2', [ctx.membership.id, ownerId]);
       if (!member.rows[0]) return res.status(400).json({ error: 'owner_not_in_project' });
     }
-    const saved = await query(
+    const saved = await recordsQuery(ctx, req.user.sub, scopedQuery => scopedQuery(
       'insert into project_records(id,project_id,environment_id,collection,owner_user_id,data) values($1,$2,$3,$4,$5,$6) returning id,data,owner_user_id,created_at,updated_at',
       [id, ctx.membership.id, env.id, col.name, ownerId, JSON.stringify(data)],
-    );
+    ));
     await audit({ userId: req.user.sub, projectId: ctx.membership.id, event: 'data.record.created', req, metadata: { environment: env.name, collection: col.name, record_id: id, owner_user_id: ownerId } });
     res.status(201).json(saved.rows[0]);
   });
@@ -130,10 +135,10 @@ export function registerPlatformDataRoutes({ app, query, requireAuth, projectMem
     if (!data || Array.isArray(data) || typeof data !== 'object') return res.status(400).json({ error: 'invalid_record' });
     const params = [JSON.stringify(data), req.params.id, ctx.membership.id, env.id, col.name];
     const ownerClause = ownerFilter(ctx, col, 6, params, req.user.sub);
-    const saved = await query(
+    const saved = await recordsQuery(ctx, req.user.sub, scopedQuery => scopedQuery(
       `update project_records set data=$1,updated_at=now() where id=$2 and project_id=$3 and environment_id=$4 and collection=$5 ${ownerClause} returning id,data,owner_user_id,created_at,updated_at`,
       params,
-    );
+    ));
     if (!saved.rows[0]) return res.status(404).json({ error: 'record_not_found' });
     await audit({ userId: req.user.sub, projectId: ctx.membership.id, event: 'data.record.updated', req, metadata: { environment: env.name, collection: col.name, record_id: req.params.id } });
     res.json(saved.rows[0]);
@@ -146,10 +151,10 @@ export function registerPlatformDataRoutes({ app, query, requireAuth, projectMem
     if (!canWrite(ctx, col, res)) return;
     const params = [req.params.id, ctx.membership.id, env.id, col.name];
     const ownerClause = ownerFilter(ctx, col, 5, params, req.user.sub);
-    const deleted = await query(
+    const deleted = await recordsQuery(ctx, req.user.sub, scopedQuery => scopedQuery(
       `delete from project_records where id=$1 and project_id=$2 and environment_id=$3 and collection=$4 ${ownerClause} returning id`,
       params,
-    );
+    ));
     if (!deleted.rows[0]) return res.status(404).json({ error: 'record_not_found' });
     await audit({ userId: req.user.sub, projectId: ctx.membership.id, event: 'data.record.deleted', req, metadata: { environment: env.name, collection: col.name, record_id: req.params.id } });
     res.status(204).end();
