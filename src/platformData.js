@@ -1,4 +1,5 @@
 import { v4 as uuid } from 'uuid';
+import { withTenantContext } from './db.js';
 
 const collectionName = /^[a-z][a-z0-9_]{1,62}$/;
 const environmentNames = new Set(['development', 'preview', 'production']);
@@ -159,13 +160,13 @@ export function registerPlatformDataRoutes({ app, query, requireAuth, projectMem
     const bucket = String(req.query?.bucket || 'default').trim();
     if (!storageBucket.test(bucket)) return res.status(400).json({ error: 'invalid_storage_path' });
     const limit = Math.min(Math.max(Number(req.query.limit || 100), 1), 500);
-    const result = await query(
+    const result = await withTenantContext({ userId: req.user.sub, projectId: ctx.membership.id }, scopedQuery => scopedQuery(
       `select id,bucket,object_key,owner_user_id,content_type,size_bytes,checksum_sha256,visibility,metadata,created_at,updated_at
        from storage_objects where project_id=$1 and bucket=$2 and deleted_at is null
        and (visibility in ('project','public') or owner_user_id=$3)
        order by created_at desc limit $4`,
       [ctx.membership.id, bucket, req.user.sub, limit],
-    );
+    ));
     res.json(result.rows);
   });
 
@@ -179,12 +180,12 @@ export function registerPlatformDataRoutes({ app, query, requireAuth, projectMem
     if (!checked.ok) return res.status(400).json({ error: checked.error });
     const checksum = await import('node:crypto').then(({ createHash }) => createHash('sha256').update(checked.content).digest('hex'));
     try {
-      const saved = await query(
+      const saved = await withTenantContext({ userId: req.user.sub, projectId: ctx.membership.id }, scopedQuery => scopedQuery(
         `insert into storage_objects(id,project_id,owner_user_id,bucket,object_key,provider,content_type,size_bytes,checksum_sha256,visibility,content)
          values($1,$2,$3,$4,$5,'postgres',$6,$7,$8,$9,$10)
          returning id,bucket,object_key,owner_user_id,content_type,size_bytes,checksum_sha256,visibility,created_at,updated_at`,
         [uuid(), ctx.membership.id, req.user.sub, bucket, key, checked.contentType, checked.content.length, checksum, checked.visibility, checked.content],
-      );
+      ));
       await audit({ userId: req.user.sub, projectId: ctx.membership.id, event: 'storage.object.created', req, metadata: { bucket, object_key: key, size_bytes: checked.content.length } });
       return res.status(201).json(saved.rows[0]);
     } catch (err) {
@@ -198,12 +199,12 @@ export function registerPlatformDataRoutes({ app, query, requireAuth, projectMem
     const bucket = String(req.params.bucket || '').trim();
     const key = String(req.params[0] || '').trim();
     if (!storageBucket.test(bucket) || !storageKey.test(key) || key.includes('..') || key.includes('//')) return res.status(400).json({ error: 'invalid_storage_path' });
-    const found = await query(
+    const found = await withTenantContext({ userId: req.user.sub, projectId: ctx.membership.id }, scopedQuery => scopedQuery(
       `select id,bucket,object_key,owner_user_id,content_type,size_bytes,checksum_sha256,visibility,content,created_at,updated_at
        from storage_objects where project_id=$1 and bucket=$2 and object_key=$3 and deleted_at is null
        and (visibility in ('project','public') or owner_user_id=$4)`,
       [ctx.membership.id, bucket, key, req.user.sub],
-    );
+    ));
     const row = found.rows[0];
     if (!row) return res.status(404).json({ error: 'object_not_found' });
     const content = Buffer.isBuffer(row.content) ? row.content : Buffer.from(row.content || '');
@@ -216,11 +217,11 @@ export function registerPlatformDataRoutes({ app, query, requireAuth, projectMem
     const bucket = String(req.params.bucket || '').trim();
     const key = String(req.params[0] || '').trim();
     if (!storageBucket.test(bucket) || !storageKey.test(key) || key.includes('..') || key.includes('//')) return res.status(400).json({ error: 'invalid_storage_path' });
-    const deleted = await query(
+    const deleted = await withTenantContext({ userId: req.user.sub, projectId: ctx.membership.id }, scopedQuery => scopedQuery(
       `update storage_objects set deleted_at=now(),updated_at=now()
        where project_id=$1 and bucket=$2 and object_key=$3 and owner_user_id=$4 and deleted_at is null returning id`,
       [ctx.membership.id, bucket, key, req.user.sub],
-    );
+    ));
     if (!deleted.rows[0]) return res.status(404).json({ error: 'object_not_found' });
     await audit({ userId: req.user.sub, projectId: ctx.membership.id, event: 'storage.object.deleted', req, metadata: { bucket, object_key: key } });
     res.status(204).end();
