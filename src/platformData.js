@@ -3,6 +3,21 @@ import { v4 as uuid } from 'uuid';
 const collectionName = /^[a-z][a-z0-9_]{1,62}$/;
 const environmentNames = new Set(['development', 'preview', 'production']);
 const elevated = role => role === 'owner' || role === 'admin';
+const storageBucket = /^[a-z0-9][a-z0-9_-]{0,62}$/;
+const storageKey = /^[A-Za-z0-9][A-Za-z0-9._/-]{0,254}$/;
+const storageVisibility = new Set(['private', 'project', 'public']);
+const maxStorageBytes = 128 * 1024;
+
+export function validateStorageObject({ bucket, key, contentBase64, visibility = 'private', contentType = 'application/octet-stream' }) {
+  if (!storageBucket.test(bucket) || !storageKey.test(key) || key.includes('..') || key.includes('//')) return { ok: false, error: 'invalid_storage_path' };
+  if (!storageVisibility.has(visibility)) return { ok: false, error: 'invalid_visibility' };
+  if (typeof contentType !== 'string' || contentType.length < 1 || contentType.length > 120 || /[\r\n]/.test(contentType)) return { ok: false, error: 'invalid_content_type' };
+  if (typeof contentBase64 !== 'string' || contentBase64.length < 1 || contentBase64.length > Math.ceil(maxStorageBytes / 3) * 4 + 8 || !/^[A-Za-z0-9+/]+={0,2}$/.test(contentBase64)) return { ok: false, error: 'invalid_content' };
+  let content;
+  try { content = Buffer.from(contentBase64, 'base64'); } catch { return { ok: false, error: 'invalid_content' }; }
+  if (!content.length || content.length > maxStorageBytes || content.toString('base64').replace(/=+$/, '') !== contentBase64.replace(/=+$/, '')) return { ok: false, error: 'invalid_content' };
+  return { ok: true, content, visibility, contentType };
+}
 
 export function registerPlatformDataRoutes({ app, query, requireAuth, projectMembership, audit }) {
   async function context(req, res) {
@@ -136,6 +151,78 @@ export function registerPlatformDataRoutes({ app, query, requireAuth, projectMem
     );
     if (!deleted.rows[0]) return res.status(404).json({ error: 'record_not_found' });
     await audit({ userId: req.user.sub, projectId: ctx.membership.id, event: 'data.record.deleted', req, metadata: { environment: env.name, collection: col.name, record_id: req.params.id } });
+    res.status(204).end();
+  });
+
+  app.get('/v1/projects/:slug/storage', requireAuth, async (req, res) => {
+    const ctx = await context(req, res); if (!ctx) return;
+    const bucket = String(req.query?.bucket || 'default').trim();
+    if (!storageBucket.test(bucket)) return res.status(400).json({ error: 'invalid_storage_path' });
+    const limit = Math.min(Math.max(Number(req.query.limit || 100), 1), 500);
+    const result = await query(
+      `select id,bucket,object_key,owner_user_id,content_type,size_bytes,checksum_sha256,visibility,metadata,created_at,updated_at
+       from storage_objects where project_id=$1 and bucket=$2 and deleted_at is null
+       and (visibility in ('project','public') or owner_user_id=$3)
+       order by created_at desc limit $4`,
+      [ctx.membership.id, bucket, req.user.sub, limit],
+    );
+    res.json(result.rows);
+  });
+
+  app.post('/v1/projects/:slug/storage/:bucket/*', requireAuth, async (req, res) => {
+    const ctx = await context(req, res); if (!ctx) return;
+    const bucket = String(req.params.bucket || '').trim();
+    const key = String(req.params[0] || '').trim();
+    const visibility = String(req.body?.visibility || 'private').trim().toLowerCase();
+    const contentType = String(req.body?.content_type || 'application/octet-stream').trim();
+    const checked = validateStorageObject({ bucket, key, contentBase64: req.body?.content_base64, visibility, contentType });
+    if (!checked.ok) return res.status(400).json({ error: checked.error });
+    const checksum = await import('node:crypto').then(({ createHash }) => createHash('sha256').update(checked.content).digest('hex'));
+    try {
+      const saved = await query(
+        `insert into storage_objects(id,project_id,owner_user_id,bucket,object_key,provider,content_type,size_bytes,checksum_sha256,visibility,content)
+         values($1,$2,$3,$4,$5,'postgres',$6,$7,$8,$9,$10)
+         returning id,bucket,object_key,owner_user_id,content_type,size_bytes,checksum_sha256,visibility,created_at,updated_at`,
+        [uuid(), ctx.membership.id, req.user.sub, bucket, key, checked.contentType, checked.content.length, checksum, checked.visibility, checked.content],
+      );
+      await audit({ userId: req.user.sub, projectId: ctx.membership.id, event: 'storage.object.created', req, metadata: { bucket, object_key: key, size_bytes: checked.content.length } });
+      return res.status(201).json(saved.rows[0]);
+    } catch (err) {
+      if (err.code === '23505') return res.status(409).json({ error: 'object_already_exists' });
+      throw err;
+    }
+  });
+
+  app.get('/v1/projects/:slug/storage/:bucket/*', requireAuth, async (req, res) => {
+    const ctx = await context(req, res); if (!ctx) return;
+    const bucket = String(req.params.bucket || '').trim();
+    const key = String(req.params[0] || '').trim();
+    if (!storageBucket.test(bucket) || !storageKey.test(key) || key.includes('..') || key.includes('//')) return res.status(400).json({ error: 'invalid_storage_path' });
+    const found = await query(
+      `select id,bucket,object_key,owner_user_id,content_type,size_bytes,checksum_sha256,visibility,content,created_at,updated_at
+       from storage_objects where project_id=$1 and bucket=$2 and object_key=$3 and deleted_at is null
+       and (visibility in ('project','public') or owner_user_id=$4)`,
+      [ctx.membership.id, bucket, key, req.user.sub],
+    );
+    const row = found.rows[0];
+    if (!row) return res.status(404).json({ error: 'object_not_found' });
+    const content = Buffer.isBuffer(row.content) ? row.content : Buffer.from(row.content || '');
+    delete row.content;
+    res.json({ ...row, content_base64: content.toString('base64') });
+  });
+
+  app.delete('/v1/projects/:slug/storage/:bucket/*', requireAuth, async (req, res) => {
+    const ctx = await context(req, res); if (!ctx) return;
+    const bucket = String(req.params.bucket || '').trim();
+    const key = String(req.params[0] || '').trim();
+    if (!storageBucket.test(bucket) || !storageKey.test(key) || key.includes('..') || key.includes('//')) return res.status(400).json({ error: 'invalid_storage_path' });
+    const deleted = await query(
+      `update storage_objects set deleted_at=now(),updated_at=now()
+       where project_id=$1 and bucket=$2 and object_key=$3 and owner_user_id=$4 and deleted_at is null returning id`,
+      [ctx.membership.id, bucket, key, req.user.sub],
+    );
+    if (!deleted.rows[0]) return res.status(404).json({ error: 'object_not_found' });
+    await audit({ userId: req.user.sub, projectId: ctx.membership.id, event: 'storage.object.deleted', req, metadata: { bucket, object_key: key } });
     res.status(204).end();
   });
 }
