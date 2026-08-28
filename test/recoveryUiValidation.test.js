@@ -7,8 +7,9 @@ assert.ok(consoleSource.includes('id="recoverRequestStep"'), 'recovery request s
 assert.ok(consoleSource.includes('id="recoverResetStep" class="hidden"'), 'recovery reset step should start hidden');
 
 for (const id of ['recoverToken', 'recoverNewPassword', 'recoverNewPassword2']) {
-  const pattern = new RegExp(`<input id="${id}"[^>]* required`);
-  assert.equal(pattern.test(consoleSource), false, `${id} must not be required while its step is hidden`);
+  const inputTag = consoleSource.match(new RegExp(`<input id="${id}"[^>]*>`))?.[0] || '';
+  assert.ok(inputTag, `${id} input missing`);
+  assert.equal(/\srequired(?:\s|>)/.test(inputTag), false, `${id} must not be required while its step is hidden`);
 }
 
 console.log('recovery UI hidden-field validation regression PASS');
