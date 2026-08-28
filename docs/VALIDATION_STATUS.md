@@ -11,9 +11,9 @@ This file records evidence-backed production validation. It must not contain sec
 - Database: `neondb`
 - Engine: PostgreSQL 18.6
 - Connection source reported by readiness endpoint: `DATABASE_URL`
-- Current production commit at review time: `f2866a283e11b2fcac36ddafa0ff4955aa08d790`
+- Current production commit at review time: `98062e1ee8f4fecad8fc9338cdd7e6e3774cf4e6`
 - Vercel deployment for that commit: READY
-- GitHub Actions `Aureon Base CI` run #92: success
+- GitHub Actions `Aureon Base CI` run #93: success
 - Vercel runtime error scan over the preceding 2 hours: no runtime errors found
 
 ## Storage / tenant isolation
@@ -25,12 +25,13 @@ Evidence confirmed:
 - Application RLS role `aureon_app` exists with `BYPASSRLS = false` and `LOGIN = false`.
 - Database owner `neondb_owner` has `BYPASSRLS = true`; tenant-facing data access must therefore continue to use the restricted role/context helper rather than relying on owner connections alone.
 - CI includes Storage validation and Storage/RLS route regression tests.
+- Production PostgreSQL E2E used disposable users/projects/objects and the real `aureon_app` RLS context. A user in tenant A could read its own private object and a project-visible peer object, could not see another user's private object, and could not see or update a project-visible object from tenant B.
+- The disposable E2E fixtures were deleted in the same transaction flow; final residue checks returned 0 users, 0 projects and 0 storage objects.
 
 Still required before Storage can be marked complete:
 
-- Authenticated HTTP E2E with disposable fixtures: tenant A upload/read/delete.
+- Authenticated black-box HTTP E2E with disposable credentials: tenant A upload/read/delete.
 - Cross-tenant HTTP attempt from tenant B must be denied/not found.
-- Verify cleanup leaves no test objects or credentials behind.
 
 ## Password recovery
 
@@ -43,8 +44,13 @@ Evidence confirmed:
 - Reset request response is uniform for unknown/known accounts to reduce account enumeration.
 - CI includes password recovery lifecycle and route regression tests.
 
+Open issue found during review:
+
+- Token consumption currently occurs before password update/session revocation in separate database operations. A database failure after token consumption could invalidate the token without completing the password change. This is safe from takeover, but not atomic. The intended fix is to run token consumption, password update and session/token revocation in one database transaction.
+
 Still required before Password Recovery can be marked complete:
 
+- Make reset completion atomic.
 - Disposable-account E2E: issue -> consume -> reuse rejected.
 - Expired/revoked token E2E in an isolated test fixture.
 
