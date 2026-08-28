@@ -69,6 +69,35 @@ export async function query(text, params = []) {
   return pool.query(text, params);
 }
 
+export async function withTenantContext({ userId, projectId }, operation) {
+  if (!connectionString) {
+    const error = new Error('database_not_configured');
+    error.code = 'DATABASE_NOT_CONFIGURED';
+    throw error;
+  }
+  if (!userId || !projectId || typeof operation !== 'function') {
+    const error = new Error('invalid_tenant_context');
+    error.code = 'INVALID_TENANT_CONTEXT';
+    throw error;
+  }
+
+  const client = await pool.connect();
+  try {
+    await client.query('begin');
+    await client.query('set local role aureon_app');
+    await client.query("select set_config('aureon.user_id', $1, true), set_config('aureon.project_id', $2, true)", [String(userId), String(projectId)]);
+    const scopedQuery = (text, params = []) => client.query(text, params);
+    const result = await operation(scopedQuery);
+    await client.query('commit');
+    return result;
+  } catch (error) {
+    try { await client.query('rollback'); } catch {}
+    throw error;
+  } finally {
+    client.release();
+  }
+}
+
 export async function databaseHealth() {
   if (!connectionString) {
     return { ok: false, configured: false, source: null, code: 'DATABASE_NOT_CONFIGURED' };
