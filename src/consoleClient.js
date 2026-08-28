@@ -5,6 +5,7 @@ export function runAureonConsole() {
     refresh: localStorage.getItem('aureon_refresh_token') || '',
     projects: [],
     selected: null,
+    recoveryEmail: '',
   };
 
   const $ = selector => document.querySelector(selector);
@@ -53,6 +54,15 @@ export function runAureonConsole() {
     $('#app').classList.toggle('hidden', !authenticated);
   }
 
+  function showAuthView(formId) {
+    document.querySelectorAll('.auth-form').forEach(form => form.classList.toggle('hidden', form.id !== formId));
+    document.querySelectorAll('.auth-tab').forEach(tab => tab.classList.toggle('active', tab.dataset.authView === formId));
+    document.querySelectorAll('.msg').forEach(message => {
+      message.textContent = '';
+      message.classList.remove('ok');
+    });
+  }
+
   function signOutLocal() {
     localStorage.removeItem('aureon_access_token');
     localStorage.removeItem('aureon_refresh_token');
@@ -77,7 +87,10 @@ export function runAureonConsole() {
       localStorage.setItem('aureon_access_token', state.token);
       localStorage.setItem('aureon_refresh_token', state.refresh);
       const me = await request('/me');
-      if (!me.is_superadmin) throw new Error('Acesso de administrador necessário');
+      if (!me.is_superadmin) {
+        signOutLocal();
+        throw new Error('Esta conta existe, mas o Console Aureon Base é restrito a administradores.');
+      }
       authUI(true);
       await view('overview');
     } catch (error) {
@@ -85,6 +98,105 @@ export function runAureonConsole() {
         ? 'E-mail ou senha inválidos.'
         : error.message;
     }
+  }
+
+  async function register(event) {
+    event.preventDefault();
+    const msg = $('#registerMsg');
+    msg.textContent = '';
+    msg.classList.remove('ok');
+    const email = $('#registerEmail').value.trim().toLowerCase();
+    const password = $('#registerPassword').value;
+    if (password !== $('#registerPassword2').value) {
+      msg.textContent = 'As senhas não são iguais.';
+      return;
+    }
+    try {
+      await request('/auth/register', {
+        method: 'POST',
+        body: JSON.stringify({ email, password }),
+      }, false);
+      msg.classList.add('ok');
+      msg.textContent = 'Conta criada com sucesso. Agora você pode entrar com seu e-mail e senha.';
+      $('#email').value = email;
+      $('#password').value = '';
+      setTimeout(() => showAuthView('loginForm'), 1200);
+    } catch (error) {
+      const messages = {
+        email_already_exists: 'Este e-mail já possui uma conta.',
+        email_not_allowed: 'O cadastro público ainda não está liberado para este e-mail.',
+        project_not_found: 'Não foi possível vincular a conta ao projeto padrão.',
+        invalid_credentials: 'Use um e-mail válido e uma senha com pelo menos 10 caracteres.',
+      };
+      msg.textContent = messages[error.message] || error.message;
+    }
+  }
+
+  async function requestPasswordReset(event) {
+    event.preventDefault();
+    const msg = $('#recoverMsg');
+    msg.textContent = '';
+    msg.classList.remove('ok');
+    const email = $('#recoverEmail').value.trim().toLowerCase();
+    try {
+      await request('/auth/request-password-reset', {
+        method: 'POST',
+        body: JSON.stringify({ email }),
+      }, false);
+      state.recoveryEmail = email;
+      $('#recoverRequestStep').classList.add('hidden');
+      $('#recoverResetStep').classList.remove('hidden');
+      msg.classList.add('ok');
+      msg.textContent = 'Se a conta existir, enviamos um token de recuperação para esse e-mail. Confira também o spam.';
+    } catch {
+      msg.classList.add('ok');
+      msg.textContent = 'Se a conta existir, enviamos um token de recuperação para esse e-mail.';
+    }
+  }
+
+  async function resetPassword() {
+    const msg = $('#recoverMsg');
+    msg.textContent = '';
+    msg.classList.remove('ok');
+    const token = $('#recoverToken').value.trim();
+    const password = $('#recoverNewPassword').value;
+    if (password.length < 10 || password.length > 128) {
+      msg.textContent = 'A nova senha precisa ter entre 10 e 128 caracteres.';
+      return;
+    }
+    if (password !== $('#recoverNewPassword2').value) {
+      msg.textContent = 'As novas senhas não são iguais.';
+      return;
+    }
+    try {
+      await request('/auth/reset-password', {
+        method: 'POST',
+        body: JSON.stringify({
+          email: state.recoveryEmail || $('#recoverEmail').value.trim().toLowerCase(),
+          token,
+          new_password: password,
+        }),
+      }, false);
+      msg.classList.add('ok');
+      msg.textContent = 'Senha redefinida com sucesso. Você já pode entrar com a nova senha.';
+      $('#email').value = state.recoveryEmail || $('#recoverEmail').value.trim().toLowerCase();
+      $('#password').value = '';
+      setTimeout(() => showAuthView('loginForm'), 1400);
+    } catch (error) {
+      msg.textContent = ['invalid_reset', 'invalid_reset_token'].includes(error.message)
+        ? 'Token inválido, expirado ou já utilizado. Solicite outro token.'
+        : error.message;
+    }
+  }
+
+  function resetRecoveryRequest() {
+    $('#recoverResetStep').classList.add('hidden');
+    $('#recoverRequestStep').classList.remove('hidden');
+    $('#recoverToken').value = '';
+    $('#recoverNewPassword').value = '';
+    $('#recoverNewPassword2').value = '';
+    $('#recoverMsg').textContent = '';
+    $('#recoverMsg').classList.remove('ok');
   }
 
   function cards(overview) {
@@ -223,6 +335,14 @@ export function runAureonConsole() {
   }
 
   $('#loginForm').addEventListener('submit', login);
+  $('#registerForm').addEventListener('submit', register);
+  $('#recoverForm').addEventListener('submit', requestPasswordReset);
+  $('#resetPasswordButton').addEventListener('click', resetPassword);
+  $('#requestAgainButton').addEventListener('click', resetRecoveryRequest);
+  document.querySelectorAll('[data-auth-view]').forEach(button => button.addEventListener('click', () => {
+    if (button.dataset.authView === 'recoverForm') resetRecoveryRequest();
+    showAuthView(button.dataset.authView);
+  }));
   $('#logout').addEventListener('click', signOutLocal);
   document.querySelectorAll('.nav button').forEach(button => button.addEventListener('click', () => view(button.dataset.view)));
   document.addEventListener('click', async event => {
