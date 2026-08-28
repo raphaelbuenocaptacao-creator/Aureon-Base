@@ -10,8 +10,9 @@ This file records evidence-backed production validation. It must not contain sec
 - `/ready`: HTTP 200 on the last validated production deployment.
 - Database: `neondb`
 - Engine: PostgreSQL 18.6
-- Current production commit at this review: `b8a7aed4bfd5250e64168416e8d9ce587e2c38ac`
+- Current production commit at this review: `a28e96d5f480c76e0f3b317a85da33442402f28a`
 - Vercel deployment for that commit: READY.
+- Runtime error scan after deploy: no error/fatal logs found in the validated window.
 
 ## Storage / tenant isolation
 
@@ -56,17 +57,26 @@ Still required before Password Recovery can be marked complete:
 RLS enabled in production on:
 
 - `storage_objects`
-
-Core multi-tenant tables observed without RLS at this review include:
-
 - `project_records`
+
+`project_records` evidence confirmed:
+
+- The production table has RLS enabled with the tenant policy active.
+- `aureon_app` has the required CRUD privileges while remaining the restricted non-BYPASSRLS execution role.
+- The API record operations were deployed through `withTenantContext` while retaining explicit project/environment/owner predicates as defense in depth.
+- Temporary-branch E2E verified that one tenant/user could read its own rows, could not read another member's owner-scoped rows, and cross-owner mutation affected 0 rows.
+- The migration was applied to the production parent branch without destructive schema changes and the temporary migration branch was removed.
+- The production deployment for the matching application change is READY and `/ready` returned HTTP 200 afterward.
+
+Core multi-tenant tables still observed without validated RLS coverage include:
+
 - `project_collections`
 - `project_environments`
 - `project_users`
 - `subscriptions`
 - `api_keys`
 
-A hardened `project_records` application path and RLS migration have been validated separately, but the production table must not be marked RLS-complete until the database policy and application context are deployed together and production regression checks pass.
+Do not promote these remaining tables to RLS-complete until policy, grants, application execution context and regression tests are deployed and validated together.
 
 ## Realtime
 
