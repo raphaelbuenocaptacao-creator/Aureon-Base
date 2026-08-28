@@ -10,6 +10,7 @@ import { requireAuth, signAccessToken, signRefreshToken, verifyRefreshToken } fr
 import { registerPlatformDataRoutes } from './platformData.js';
 import { registerPlatformAdminRoutes } from './platformAdmin.js';
 import { registerConsoleRoutes } from './console.js';
+import { issuePasswordResetToken, consumePasswordResetToken, hashResetToken } from './passwordRecovery.js';
 
 const app = express();
 app.disable('x-powered-by');
@@ -63,17 +64,8 @@ const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
 const allowedEmails = (process.env.ALLOWED_EMAILS || '').split(',').map(v => v.trim().toLowerCase()).filter(Boolean);
 const lifetimeEmails = (process.env.LIFETIME_EMAILS || '').split(',').map(v => v.trim().toLowerCase()).filter(Boolean);
 const hashToken = token => crypto.createHash('sha256').update(String(token)).digest('hex');
-const resetWindowMs = 10 * 60_000;
 
-function recoveryCode(user, slot = Math.floor(Date.now() / resetWindowMs)) {
-  const secret = String(process.env.JWT_SECRET || '');
-  const version = hashToken(user.password_hash);
-  const digest = crypto.createHmac('sha256', secret).update(`${user.id}:${version}:${slot}`).digest('hex');
-  const number = Number.parseInt(digest.slice(0, 12), 16) % 100000000;
-  return String(number).padStart(8, '0');
-}
-
-async function sendRecoveryEmail(email, code) {
+async function sendRecoveryEmail(email, token) {
   const apiKey = String(process.env.RESEND_API_KEY || '').trim();
   const from = String(process.env.MAIL_FROM || 'TradeVision <onboarding@resend.dev>').trim();
   if (!apiKey) return false;
@@ -84,8 +76,8 @@ async function sendRecoveryEmail(email, code) {
       body: JSON.stringify({
         from,
         to: [email],
-        subject: 'Seu código de recuperação do TradeVision',
-        html: `<div style="font-family:Arial,sans-serif;background:#0b1117;color:#e8eef3;padding:28px"><div style="max-width:520px;margin:auto;background:#111b24;border:1px solid #263746;border-radius:14px;padding:28px"><h2 style="margin-top:0">TradeVision</h2><p>Recebemos uma solicitação para redefinir sua senha.</p><p style="font-size:34px;letter-spacing:7px;font-weight:700;color:#00a8d6">${code}</p><p>Esse código é válido por aproximadamente 10 minutos.</p><p style="color:#8293a1;font-size:13px">Se você não solicitou a alteração, ignore este e-mail.</p></div></div>`,
+        subject: 'Recuperação de senha — Aureon Base',
+        html: `<div style="font-family:Arial,sans-serif;background:#0b1117;color:#e8eef3;padding:28px"><div style="max-width:520px;margin:auto;background:#111b24;border:1px solid #263746;border-radius:14px;padding:28px"><h2 style="margin-top:0">Aureon Base</h2><p>Recebemos uma solicitação para redefinir sua senha.</p><p style="font-size:18px;word-break:break-all;font-weight:700;color:#00a8d6">${token}</p><p>Este token é de uso único e expira em aproximadamente 10 minutos.</p><p style="color:#8293a1;font-size:13px">Se você não solicitou a alteração, ignore este e-mail.</p></div></div>`,
       }),
     });
     if (!response.ok) console.error('recovery_email_error', response.status);
@@ -273,35 +265,40 @@ app.post('/auth/request-password-reset', resetRequestLimit, async (req, res) => 
   const email = String(req.body?.email || '').trim().toLowerCase();
   if (!emailRegex.test(email)) return res.status(202).json({ ok: true });
   try {
-    const found = await query('select id,email,password_hash,is_active from users where email=$1', [email]);
+    const found = await query('select id,email,is_active from users where email=$1', [email]);
     const user = found.rows[0];
     if (!user || !user.is_active) return res.status(202).json({ ok: true });
-    const code = recoveryCode(user);
-    const sent = await sendRecoveryEmail(user.email, code);
-    await audit({ userId: user.id, event: 'user.password_reset_requested', req, metadata: { delivered: sent } });
-    if (!sent) return res.status(503).json({ error: 'email_service_unavailable' });
+    const issued = await issuePasswordResetToken({ query, userId: user.id, requestedIp: req.ip });
+    const sent = await sendRecoveryEmail(user.email, issued.token);
+    if (!sent) {
+      await query(
+        'update password_reset_tokens set used_at=coalesce(used_at,now()) where user_id=$1 and token_hash=$2 and used_at is null',
+        [user.id, hashResetToken(issued.token)],
+      );
+    }
+    await audit({ userId: user.id, event: 'user.password_reset_requested', req, metadata: { delivered: sent, expires_in_minutes: issued.expiresInMinutes } });
     return res.status(202).json({ ok: true });
   } catch (err) {
     console.error('request_password_reset_error', err);
-    return res.status(500).json({ error: 'internal_error' });
+    return res.status(202).json({ ok: true });
   }
 });
 
 app.post('/auth/reset-password', authLimit, async (req, res) => {
   const email = String(req.body?.email || '').trim().toLowerCase();
-  const code = String(req.body?.code || '').replace(/\D/g, '');
+  const token = String(req.body?.token || req.body?.code || '').trim();
   const newPassword = String(req.body?.new_password || '');
-  if (!emailRegex.test(email) || !/^\d{8}$/.test(code) || newPassword.length < 10 || newPassword.length > 128) return res.status(400).json({ error: 'invalid_reset' });
+  if (!emailRegex.test(email) || !/^[A-Za-z0-9_-]{32,128}$/.test(token) || newPassword.length < 10 || newPassword.length > 128) return res.status(400).json({ error: 'invalid_reset' });
   try {
-    const found = await query('select id,email,password_hash,is_active from users where email=$1', [email]);
+    const found = await query('select id,email,is_active from users where email=$1', [email]);
     const user = found.rows[0];
     if (!user || !user.is_active) return res.status(400).json({ error: 'invalid_reset' });
-    const slot = Math.floor(Date.now() / resetWindowMs);
-    const valid = [slot, slot - 1].some(s => crypto.timingSafeEqual(Buffer.from(code), Buffer.from(recoveryCode(user, s))));
-    if (!valid) return res.status(401).json({ error: 'invalid_reset_code' });
+    const valid = await consumePasswordResetToken({ query, userId: user.id, token });
+    if (!valid) return res.status(401).json({ error: 'invalid_reset_token' });
     const passwordHash = await bcrypt.hash(newPassword, 12);
     await query('update users set password_hash=$1,updated_at=now() where id=$2', [passwordHash, user.id]);
     await query('update sessions set revoked_at=now() where user_id=$1 and revoked_at is null', [user.id]);
+    await query('update password_reset_tokens set used_at=coalesce(used_at,now()) where user_id=$1 and used_at is null', [user.id]);
     await audit({ userId: user.id, event: 'user.password_reset', req });
     res.status(204).end();
   } catch (err) {
@@ -343,12 +340,12 @@ app.get('/admin/projects/:slug/users', requireAuth, requireSuperAdmin, async (re
 });
 
 app.post('/admin/users/:userId/reset-code', requireAuth, requireSuperAdmin, async (req, res) => {
-  const found = await query('select id,email,password_hash,is_active from users where id=$1', [req.params.userId]);
+  const found = await query('select id,email,is_active from users where id=$1', [req.params.userId]);
   const user = found.rows[0];
   if (!user || !user.is_active) return res.status(404).json({ error: 'user_not_found' });
-  const code = recoveryCode(user);
-  await audit({ userId: req.user.sub, event: 'admin.reset_code_generated', req, metadata: { target_user_id: user.id } });
-  res.json({ email: user.email, code, expires_in_minutes: 10 });
+  const issued = await issuePasswordResetToken({ query, userId: user.id, requestedIp: req.ip });
+  await audit({ userId: req.user.sub, event: 'admin.reset_token_generated', req, metadata: { target_user_id: user.id, expires_in_minutes: issued.expiresInMinutes } });
+  res.json({ email: user.email, token: issued.token, expires_in_minutes: issued.expiresInMinutes });
 });
 
 app.put('/admin/projects/:slug/users/:userId/access', requireAuth, requireSuperAdmin, async (req, res) => {
