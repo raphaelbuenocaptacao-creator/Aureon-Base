@@ -59,6 +59,12 @@ export function createAureon(baseUrl, options = {}) {
     return data;
   }
 
+  function encodeStorageKey(key) {
+    const rawKey = String(key || '').trim();
+    if (!rawKey) throw new Error('Aureon storage key is required.');
+    return rawKey.split('/').map(encodeURIComponent).join('/');
+  }
+
   function project(slug) {
     const projectSlug = encodeURIComponent(slug);
     return {
@@ -73,6 +79,25 @@ export function createAureon(baseUrl, options = {}) {
           insert: data => request(base, { method: 'POST', body: JSON.stringify({ data }) }),
           update: (id, data) => request(`${base}/${encodeURIComponent(id)}`, { method: 'PUT', body: JSON.stringify({ data }) }),
           remove: id => request(`${base}/${encodeURIComponent(id)}`, { method: 'DELETE' }),
+        };
+      },
+      storage(bucket = 'default') {
+        const encodedBucket = encodeURIComponent(bucket);
+        const base = `/v1/projects/${projectSlug}/storage`;
+        return {
+          list: ({ limit = 100 } = {}) => request(`${base}?bucket=${encodedBucket}&limit=${encodeURIComponent(limit)}`),
+          upload(key, contentBase64, { visibility = 'private', contentType = 'application/octet-stream' } = {}) {
+            return request(`${base}/${encodedBucket}/${encodeStorageKey(key)}`, {
+              method: 'POST',
+              body: JSON.stringify({
+                content_base64: contentBase64,
+                visibility,
+                content_type: contentType,
+              }),
+            });
+          },
+          download: key => request(`${base}/${encodedBucket}/${encodeStorageKey(key)}`),
+          remove: key => request(`${base}/${encodedBucket}/${encodeStorageKey(key)}`, { method: 'DELETE' }),
         };
       },
     };
@@ -118,6 +143,10 @@ export function createAureon(baseUrl, options = {}) {
     from(collection, projectSlug = options.project) {
       if (!projectSlug) throw new Error('Aureon project slug is required.');
       return project(projectSlug).from(collection);
+    },
+    storage(bucket = 'default', projectSlug = options.project) {
+      if (!projectSlug) throw new Error('Aureon project slug is required.');
+      return project(projectSlug).storage(bucket);
     },
   };
 }
