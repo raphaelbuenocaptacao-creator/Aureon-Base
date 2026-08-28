@@ -5,7 +5,7 @@ import bcrypt from 'bcryptjs';
 import crypto from 'node:crypto';
 import { v4 as uuid } from 'uuid';
 import 'dotenv/config';
-import { query, databaseHealth } from './db.js';
+import { query, databaseHealth, withTransaction } from './db.js';
 import { requireAuth, signAccessToken, signRefreshToken, verifyRefreshToken } from './auth.js';
 import { registerPlatformDataRoutes } from './platformData.js';
 import { registerPlatformAdminRoutes } from './platformAdmin.js';
@@ -293,12 +293,16 @@ app.post('/auth/reset-password', authLimit, async (req, res) => {
     const found = await query('select id,email,is_active from users where email=$1', [email]);
     const user = found.rows[0];
     if (!user || !user.is_active) return res.status(400).json({ error: 'invalid_reset' });
-    const valid = await consumePasswordResetToken({ query, userId: user.id, token });
-    if (!valid) return res.status(401).json({ error: 'invalid_reset_token' });
     const passwordHash = await bcrypt.hash(newPassword, 12);
-    await query('update users set password_hash=$1,updated_at=now() where id=$2', [passwordHash, user.id]);
-    await query('update sessions set revoked_at=now() where user_id=$1 and revoked_at is null', [user.id]);
-    await query('update password_reset_tokens set used_at=coalesce(used_at,now()) where user_id=$1 and used_at is null', [user.id]);
+    const completed = await withTransaction(async transactionQuery => {
+      const valid = await consumePasswordResetToken({ query: transactionQuery, userId: user.id, token });
+      if (!valid) return false;
+      await transactionQuery('update users set password_hash=$1,updated_at=now() where id=$2', [passwordHash, user.id]);
+      await transactionQuery('update sessions set revoked_at=now() where user_id=$1 and revoked_at is null', [user.id]);
+      await transactionQuery('update password_reset_tokens set used_at=coalesce(used_at,now()) where user_id=$1 and used_at is null', [user.id]);
+      return true;
+    });
+    if (!completed) return res.status(401).json({ error: 'invalid_reset_token' });
     await audit({ userId: user.id, event: 'user.password_reset', req });
     res.status(204).end();
   } catch (err) {
@@ -415,7 +419,6 @@ app.put('/projects/:slug/settings', requireAuth, async (req, res) => {
   const saved = await query(`insert into trading_settings(project_id,user_id,daily_stop,daily_target,base_contracts,profit_step,max_contracts) values($1,$2,$3,$4,$5,$6,$7) on conflict(project_id,user_id) do update set daily_stop=excluded.daily_stop,daily_target=excluded.daily_target,base_contracts=excluded.base_contracts,profit_step=excluded.profit_step,max_contracts=excluded.max_contracts,updated_at=now() returning *`, [ctx.membership.id, req.user.sub, values.daily_stop, values.daily_target, values.base_contracts, values.profit_step, values.max_contracts]);
   res.json(saved.rows[0]);
 });
-
 
 registerPlatformDataRoutes({
   app,

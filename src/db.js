@@ -69,6 +69,33 @@ export async function query(text, params = []) {
   return pool.query(text, params);
 }
 
+export async function withTransaction(operation) {
+  if (!connectionString) {
+    const error = new Error('database_not_configured');
+    error.code = 'DATABASE_NOT_CONFIGURED';
+    throw error;
+  }
+  if (typeof operation !== 'function') {
+    const error = new TypeError('transaction_operation_required');
+    error.code = 'INVALID_TRANSACTION_OPERATION';
+    throw error;
+  }
+
+  const client = await pool.connect();
+  try {
+    await client.query('begin');
+    const transactionQuery = (text, params = []) => client.query(text, params);
+    const result = await operation(transactionQuery);
+    await client.query('commit');
+    return result;
+  } catch (error) {
+    try { await client.query('rollback'); } catch {}
+    throw error;
+  } finally {
+    client.release();
+  }
+}
+
 export async function withTenantContext({ userId, projectId }, operation) {
   if (!connectionString) {
     const error = new Error('database_not_configured');
