@@ -55,8 +55,9 @@ POST   /auth/register
 POST   /auth/login
 POST   /auth/refresh
 POST   /auth/logout
-POST   /auth/password/forgot
-POST   /auth/password/reset
+POST   /auth/request-password-reset
+POST   /auth/reset-password
+POST   /auth/change-password
 GET    /me
 GET    /projects
 GET    /projects/:slug/access
@@ -75,7 +76,7 @@ GET    /admin/overview
 
 Project-scoped queries execute with an explicit tenant context. The restricted application role does not have `BYPASSRLS`, and RLS policies enforce project isolation for tenant data. Storage, core multi-tenant tables and realtime events have PostgreSQL integration coverage. Realtime events are append-only for the restricted application role.
 
-Password reset tokens are random, stored only as hashes, expire, are single-use, and previous tokens are revoked when a new reset is requested. A successful reset revokes existing sessions. External e-mail delivery still depends on the configured provider and must be validated separately in each production environment.
+Password reset tokens are random, stored only as hashes, expire, are single-use, and previous tokens are revoked when a new reset is requested. A successful reset revokes existing sessions. External e-mail delivery still depends on the configured provider and must be validated separately in each production environment. Production recovery requires `RESEND_API_KEY` and a `MAIL_FROM` sender on a verified provider domain; see `docs/DEPLOYMENT.md` for the evidence checklist.
 
 ## Validation policy
 
