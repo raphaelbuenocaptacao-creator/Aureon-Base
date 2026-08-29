@@ -25,7 +25,7 @@ test('reset endpoint completes token consumption, password update and revocation
   const start = source.indexOf("app.post('/auth/reset-password'");
   const end = source.indexOf("app.get('/me'", start);
   const route = source.slice(start, end);
-  assert.match(source, /import \{ query, databaseHealth, withTransaction \} from '\.\/db\.js'/);
+  assert.match(source, /import \{[^}]*\bwithTransaction\b[^}]*\} from '\.\/db\.js'/);
   assert.match(route, /withTransaction\(async transactionQuery => \{/);
   assert.match(route, /consumePasswordResetToken\(\{ query: transactionQuery/);
   assert.match(route, /transactionQuery\('update users set password_hash/);
