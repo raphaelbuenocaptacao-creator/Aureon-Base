@@ -24,11 +24,11 @@ export async function issuePasswordResetToken({ query, userId, requestedIp = nul
        update password_reset_tokens
           set used_at=coalesce(used_at, now())
         from lock_user
-       where user_id=$1 and used_at is null
+       where user_id=$1::uuid and used_at is null
        returning id
      )
      insert into password_reset_tokens(user_id,token_hash,expires_at,requested_ip)
-     select $1,$2,now()+($3 || ' minutes')::interval,$4
+     select $1::uuid,$2,now()+($3 || ' minutes')::interval,$4
        from lock_user`,
     [userId, tokenHash, String(ttl), requestedIp],
   );
