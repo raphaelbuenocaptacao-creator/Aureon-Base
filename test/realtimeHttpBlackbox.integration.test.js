@@ -47,6 +47,12 @@ async function api(baseUrl, path, token, options = {}) {
   });
 }
 
+async function assertStatus(response, expected, message) {
+  if (response.status === expected) return;
+  const detail = await response.text().catch(() => '');
+  assert.equal(response.status, expected, message ? `${message}: ${detail}` : detail);
+}
+
 test('Realtime HTTP black-box isolates publish and polling across projects', { skip: !databaseUrl || !jwtSecret }, async () => {
   const admin = new Client({ connectionString: databaseUrl });
   await admin.connect();
@@ -88,39 +94,39 @@ test('Realtime HTTP black-box isolates publish and polling across projects', { s
       method: 'POST',
       body: JSON.stringify({ topic: 'orders', event_type: 'order.created', payload: { tenant: 'a' } }),
     });
-    assert.equal(response.status, 201, await response.text());
+    await assertStatus(response, 201);
     const eventA = (await response.json()).event;
     assert.equal(eventA.project_id, projectA);
     assert.equal(eventA.actor_user_id, userA);
     assert.deepEqual(eventA.payload, { tenant: 'a' });
 
     response = await api(baseUrl, `/api/projects/${slugA}/realtime/events?after=0&topic=orders`, tokenA);
-    assert.equal(response.status, 200, await response.text());
+    await assertStatus(response, 200);
     let body = await response.json();
     assert.equal(body.events.length, 1);
     assert.equal(body.events[0].project_id, projectA);
     assert.equal(body.events[0].payload.tenant, 'a');
 
     response = await api(baseUrl, `/api/projects/${slugA}/realtime/events?after=0`, tokenB);
-    assert.equal(response.status, 403, 'tenant B must not poll tenant A project');
+    await assertStatus(response, 403, 'tenant B must not poll tenant A project');
 
     response = await api(baseUrl, `/api/projects/${slugA}/realtime/publish`, tokenB, {
       method: 'POST',
       body: JSON.stringify({ topic: 'orders', event_type: 'order.created', payload: { tenant: 'forged-b-to-a' } }),
     });
-    assert.equal(response.status, 403, 'tenant B must not publish into tenant A project');
+    await assertStatus(response, 403, 'tenant B must not publish into tenant A project');
 
     response = await api(baseUrl, `/api/projects/${slugB}/realtime/publish`, tokenB, {
       method: 'POST',
       body: JSON.stringify({ topic: 'orders', event_type: 'order.created', payload: { tenant: 'b' } }),
     });
-    assert.equal(response.status, 201, await response.text());
+    await assertStatus(response, 201);
     const eventB = (await response.json()).event;
     assert.equal(eventB.project_id, projectB);
     assert.equal(eventB.actor_user_id, userB);
 
     response = await api(baseUrl, `/api/projects/${slugB}/realtime/events?after=0`, tokenB);
-    assert.equal(response.status, 200, await response.text());
+    await assertStatus(response, 200);
     body = await response.json();
     assert.equal(body.events.length, 1);
     assert.equal(body.events[0].project_id, projectB);
