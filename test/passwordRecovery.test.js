@@ -10,9 +10,21 @@ test('reset tokens are random, URL-safe and only hashes are persisted', async ()
 
   assert.notEqual(first.token, second.token);
   assert.match(first.token, /^[A-Za-z0-9_-]{40,}$/);
-  assert.equal(calls[1].params[1], hashResetToken(first.token));
-  assert.notEqual(calls[1].params[1], first.token);
+  assert.equal(calls[0].params[1], hashResetToken(first.token));
+  assert.notEqual(calls[0].params[1], first.token);
   assert.match(calls[0].sql, /used_at=coalesce\(used_at, now\(\)\)/);
+});
+
+test('issuance is serialized per user in one PostgreSQL statement', async () => {
+  const calls = [];
+  const query = async (sql, params) => { calls.push({ sql, params }); return { rows: [] }; };
+  await issuePasswordResetToken({ query, userId: 'user-lock', ttlMinutes: 10 });
+
+  assert.equal(calls.length, 1);
+  assert.match(calls[0].sql, /pg_advisory_xact_lock\(hashtextextended\(\$1::text, 0\)\)/);
+  assert.match(calls[0].sql, /with lock_user as materialized/i);
+  assert.match(calls[0].sql, /update password_reset_tokens/i);
+  assert.match(calls[0].sql, /insert into password_reset_tokens/i);
 });
 
 test('consume is atomic, one-time and expiration-aware', async () => {
