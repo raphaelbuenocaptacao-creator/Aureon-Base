@@ -349,8 +349,21 @@ app.post('/admin/users/:userId/reset-code', requireAuth, requireSuperAdmin, asyn
   const user = found.rows[0];
   if (!user || !user.is_active) return res.status(404).json({ error: 'user_not_found' });
   const issued = await issuePasswordResetToken({ query, userId: user.id, requestedIp: req.ip });
-  await audit({ userId: req.user.sub, event: 'admin.reset_token_generated', req, metadata: { target_user_id: user.id, expires_in_minutes: issued.expiresInMinutes } });
-  res.json({ email: user.email, token: issued.token, expires_in_minutes: issued.expiresInMinutes });
+  const sent = await sendRecoveryEmail(user.email, issued.token);
+  if (!sent) {
+    await query(
+      'update password_reset_tokens set used_at=coalesce(used_at,now()) where user_id=$1 and token_hash=$2 and used_at is null',
+      [user.id, hashResetToken(issued.token)],
+    );
+  }
+  await audit({
+    userId: req.user.sub,
+    event: 'admin.password_reset_requested',
+    req,
+    metadata: { target_user_id: user.id, delivered: sent, expires_in_minutes: issued.expiresInMinutes },
+  });
+  if (!sent) return res.status(503).json({ error: 'email_delivery_failed' });
+  return res.status(202).json({ ok: true, email: user.email, expires_in_minutes: issued.expiresInMinutes });
 });
 
 app.put('/admin/projects/:slug/users/:userId/access', requireAuth, requireSuperAdmin, async (req, res) => {
