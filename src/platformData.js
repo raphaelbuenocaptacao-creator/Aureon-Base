@@ -185,12 +185,23 @@ export function registerPlatformDataRoutes({ app, query, requireAuth, projectMem
     if (!checked.ok) return res.status(400).json({ error: checked.error });
     const checksum = await import('node:crypto').then(({ createHash }) => createHash('sha256').update(checked.content).digest('hex'));
     try {
-      const saved = await withTenantContext({ userId: req.user.sub, projectId: ctx.membership.id }, scopedQuery => scopedQuery(
-        `insert into storage_objects(id,project_id,owner_user_id,bucket,object_key,provider,content_type,size_bytes,checksum_sha256,visibility,content)
-         values($1,$2,$3,$4,$5,'postgres',$6,$7,$8,$9,$10)
-         returning id,bucket,object_key,owner_user_id,content_type,size_bytes,checksum_sha256,visibility,created_at,updated_at`,
-        [uuid(), ctx.membership.id, req.user.sub, bucket, key, checked.contentType, checked.content.length, checksum, checked.visibility, checked.content],
-      ));
+      const saved = await withTenantContext({ userId: req.user.sub, projectId: ctx.membership.id }, async scopedQuery => {
+        const restored = await scopedQuery(
+          `update storage_objects
+           set deleted_at=null, provider='postgres', provider_key=null, content_type=$5, size_bytes=$6,
+               checksum_sha256=$7, visibility=$8, content=$9, metadata='{}'::jsonb, updated_at=now()
+           where project_id=$1 and owner_user_id=$2 and bucket=$3 and object_key=$4 and deleted_at is not null
+           returning id,bucket,object_key,owner_user_id,content_type,size_bytes,checksum_sha256,visibility,created_at,updated_at`,
+          [ctx.membership.id, req.user.sub, bucket, key, checked.contentType, checked.content.length, checksum, checked.visibility, checked.content],
+        );
+        if (restored.rows[0]) return restored;
+        return scopedQuery(
+          `insert into storage_objects(id,project_id,owner_user_id,bucket,object_key,provider,content_type,size_bytes,checksum_sha256,visibility,content)
+           values($1,$2,$3,$4,$5,'postgres',$6,$7,$8,$9,$10)
+           returning id,bucket,object_key,owner_user_id,content_type,size_bytes,checksum_sha256,visibility,created_at,updated_at`,
+          [uuid(), ctx.membership.id, req.user.sub, bucket, key, checked.contentType, checked.content.length, checksum, checked.visibility, checked.content],
+        );
+      });
       await audit({ userId: req.user.sub, projectId: ctx.membership.id, event: 'storage.object.created', req, metadata: { bucket, object_key: key, size_bytes: checked.content.length } });
       return res.status(201).json(saved.rows[0]);
     } catch (err) {
