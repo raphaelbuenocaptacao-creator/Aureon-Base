@@ -74,6 +74,22 @@ export function createAureonClient(baseUrl) {
           update: values => request(`/projects/${s}/settings`, { method: 'PUT', body: JSON.stringify(values) }),
         };
       },
+      realtime(slug = 'tradevision') {
+        const s = encodeURIComponent(slug);
+        return {
+          publish(topic, eventType, payload = {}) {
+            return request(`/api/projects/${s}/realtime/publish`, {
+              method: 'POST',
+              body: JSON.stringify({ topic, event_type: eventType, payload }),
+            });
+          },
+          events({ after = 0, limit = 100, topic = null } = {}) {
+            const params = new URLSearchParams({ after: String(after), limit: String(limit) });
+            if (topic !== null && topic !== undefined && String(topic) !== '') params.set('topic', String(topic));
+            return request(`/api/projects/${s}/realtime/events?${params.toString()}`);
+          },
+        };
+      },
     },
   };
 }
