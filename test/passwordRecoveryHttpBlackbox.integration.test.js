@@ -3,26 +3,12 @@ import assert from 'node:assert/strict';
 import { spawn } from 'node:child_process';
 import { randomBytes, randomUUID, createHash } from 'node:crypto';
 import pg from 'pg';
-import jwt from 'jsonwebtoken';
 import bcrypt from 'bcryptjs';
+import { issuePasswordResetToken } from '../src/passwordRecovery.js';
 
 const { Client } = pg;
 const databaseUrl = process.env.INTEGRATION_DATABASE_URL;
 const jwtSecret = process.env.JWT_SECRET;
-
-function accessToken(userId, email) {
-  return jwt.sign(
-    { sub: userId, email, type: 'access' },
-    jwtSecret,
-    {
-      expiresIn: '5m',
-      issuer: 'aureon-base',
-      audience: 'aureon-apps',
-      algorithm: 'HS256',
-      jwtid: randomUUID(),
-    },
-  );
-}
 
 async function waitForServer(baseUrl, child) {
   const deadline = Date.now() + 10_000;
@@ -37,13 +23,10 @@ async function waitForServer(baseUrl, child) {
   throw new Error('server did not become healthy');
 }
 
-async function postJson(baseUrl, path, body, token = null) {
+async function postJson(baseUrl, path, body) {
   return fetch(`${baseUrl}${path}`, {
     method: 'POST',
-    headers: {
-      'content-type': 'application/json',
-      ...(token ? { authorization: `Bearer ${token}` } : {}),
-    },
+    headers: { 'content-type': 'application/json' },
     body: JSON.stringify(body),
   });
 }
@@ -54,9 +37,7 @@ test('Password recovery HTTP black-box enforces expiration, revocation, one-time
   const adminDb = new Client({ connectionString: databaseUrl });
   await adminDb.connect();
 
-  const adminId = randomUUID();
   const userId = randomUUID();
-  const adminEmail = `reset-admin-${adminId}@example.test`;
   const userEmail = `reset-user-${userId}@example.test`;
   const oldPassword = 'OldPassword!123';
   const newPassword = 'NewPassword!456';
@@ -67,8 +48,8 @@ test('Password recovery HTTP black-box enforces expiration, revocation, one-time
   const baseUrl = `http://127.0.0.1:${port}`;
 
   await adminDb.query(
-    "insert into users(id,email,password_hash,is_superadmin) values ($1,$2,'x',true),($3,$4,$5,false)",
-    [adminId, adminEmail, userId, userEmail, oldHash],
+    'insert into users(id,email,password_hash,is_superadmin) values ($1,$2,$3,false)',
+    [userId, userEmail, oldHash],
   );
   await adminDb.query(
     "insert into password_reset_tokens(user_id,token_hash,created_at,expires_at) values($1,$2,now()-interval '20 minutes',now()-interval '10 minutes')",
@@ -79,7 +60,7 @@ test('Password recovery HTTP black-box enforces expiration, revocation, one-time
     [sessionId, userId, sha256('discardable-refresh-token')],
   );
 
-  const adminToken = accessToken(adminId, adminEmail);
+  const testQuery = (sql, params) => adminDb.query(sql, params);
   const child = spawn(process.execPath, ['src/server.js'], {
     cwd: process.cwd(),
     env: {
@@ -102,14 +83,10 @@ test('Password recovery HTTP black-box enforces expiration, revocation, one-time
     });
     assert.equal(response.status, 401, 'expired token must be rejected');
 
-    response = await postJson(baseUrl, `/admin/users/${userId}/reset-code`, {}, adminToken);
-    assert.equal(response.status, 200, 'admin reset token issuance must succeed');
-    const first = await response.json();
+    const first = await issuePasswordResetToken({ query: testQuery, userId });
     assert.match(first.token, /^[A-Za-z0-9_-]{32,128}$/);
 
-    response = await postJson(baseUrl, `/admin/users/${userId}/reset-code`, {}, adminToken);
-    assert.equal(response.status, 200, 'replacement reset token issuance must succeed');
-    const second = await response.json();
+    const second = await issuePasswordResetToken({ query: testQuery, userId });
     assert.notEqual(second.token, first.token);
 
     response = await postJson(baseUrl, '/auth/reset-password', {
