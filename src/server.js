@@ -5,11 +5,12 @@ import bcrypt from 'bcryptjs';
 import crypto from 'node:crypto';
 import { v4 as uuid } from 'uuid';
 import 'dotenv/config';
-import { query, databaseHealth, withTransaction } from './db.js';
+import { query, databaseHealth, withTransaction, withTenantContext } from './db.js';
 import { requireAuth, signAccessToken, signRefreshToken, verifyRefreshToken } from './auth.js';
 import { registerPlatformDataRoutes } from './platformData.js';
 import { registerPlatformAdminRoutes } from './platformAdmin.js';
 import { registerConsoleRoutes } from './console.js';
+import { registerRealtimeRoutes } from './realtime.js';
 import { issuePasswordResetToken, consumePasswordResetToken, hashResetToken } from './passwordRecovery.js';
 
 const app = express();
@@ -436,6 +437,14 @@ registerPlatformAdminRoutes({
   requireAuth,
   requireSuperAdmin,
   projectBySlug,
+  audit,
+});
+
+registerRealtimeRoutes({
+  app,
+  requireAuth,
+  ensureProjectAccess,
+  withTenantContext,
   audit,
 });
 
