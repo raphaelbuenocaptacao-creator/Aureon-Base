@@ -103,12 +103,12 @@ test('Password recovery HTTP black-box enforces expiration, revocation, one-time
     assert.equal(response.status, 401, 'expired token must be rejected');
 
     response = await postJson(baseUrl, `/admin/users/${userId}/reset-code`, {}, adminToken);
-    assert.equal(response.status, 200, await response.text());
+    assert.equal(response.status, 200, 'admin reset token issuance must succeed');
     const first = await response.json();
     assert.match(first.token, /^[A-Za-z0-9_-]{32,128}$/);
 
     response = await postJson(baseUrl, `/admin/users/${userId}/reset-code`, {}, adminToken);
-    assert.equal(response.status, 200, await response.text());
+    assert.equal(response.status, 200, 'replacement reset token issuance must succeed');
     const second = await response.json();
     assert.notEqual(second.token, first.token);
 
