@@ -292,7 +292,7 @@ app.post('/auth/reset-password', authLimit, async (req, res) => {
   try {
     const found = await query('select id,email,is_active from users where email=$1', [email]);
     const user = found.rows[0];
-    if (!user || !user.is_active) return res.status(400).json({ error: 'invalid_reset' });
+    if (!user || !user.is_active) return res.status(401).json({ error: 'invalid_reset_token' });
     const passwordHash = await bcrypt.hash(newPassword, 12);
     const completed = await withTransaction(async transactionQuery => {
       const valid = await consumePasswordResetToken({ query: transactionQuery, userId: user.id, token });
