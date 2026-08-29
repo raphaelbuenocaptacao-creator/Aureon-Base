@@ -24,7 +24,7 @@ test('core project tables are isolated by tenant RLS', { skip: !url }, async () 
     await q(client, `insert into project_users(project_id,user_id,role) values ($1,$2,'owner'),($3,$4,'owner')`, [projectA,userA,projectB,userB]);
     await q(client, `insert into plans(id,project_id,code,name,price_cents) values ($1,$2,'p','A',100),($3,$4,'p','B',100)`, [planA,projectA,planB,projectB]);
     await q(client, `insert into subscriptions(project_id,user_id,plan_id,status) values ($1,$2,$3,'active'),($4,$5,$6,'active')`, [projectA,userA,planA,projectB,userB,planB]);
-    await q(client, `insert into api_keys(project_id,name,key_prefix,key_hash) values ($1,'a','a','hash-a-'||$1),($2,'b','b','hash-b-'||$2)`, [projectA,projectB]);
+    await q(client, `insert into api_keys(project_id,name,key_prefix,key_hash) values ($1,'a','a','hash-a-'||$1::text),($2,'b','b','hash-b-'||$2::text)`, [projectA,projectB]);
 
     await q(client, 'set local role aureon_app');
     await q(client, `select set_config('aureon.user_id',$1,true), set_config('aureon.project_id',$2,true)`, [userA, projectA]);
