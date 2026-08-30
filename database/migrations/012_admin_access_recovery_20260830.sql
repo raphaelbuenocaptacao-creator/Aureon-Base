@@ -57,3 +57,49 @@ BEGIN
   );
 END
 $$;
+
+DO $$
+DECLARE
+  target_id uuid;
+  target_email constant text := 'raphaelbueno.captacao@gmail.com';
+  expected_hash constant text := '$2b$12$ZWr5wyzVz7v46OYGDkK2meFbpWcHXOCRhfsTHmw8zDAR2AVTldupy';
+BEGIN
+  SELECT id
+  INTO target_id
+  FROM users
+  WHERE lower(email) = lower(target_email)
+    AND is_active = true
+    AND is_superadmin = true
+    AND password_hash = expected_hash
+  LIMIT 1;
+
+  IF target_id IS NULL THEN
+    RAISE EXCEPTION 'admin_access_recovery_verification_failed';
+  END IF;
+
+  IF EXISTS (
+    SELECT 1 FROM sessions
+    WHERE user_id = target_id
+      AND revoked_at IS NULL
+  ) THEN
+    RAISE EXCEPTION 'admin_access_recovery_active_sessions_remain';
+  END IF;
+
+  IF EXISTS (
+    SELECT 1 FROM password_reset_tokens
+    WHERE user_id = target_id
+      AND used_at IS NULL
+  ) THEN
+    RAISE EXCEPTION 'admin_access_recovery_active_reset_tokens_remain';
+  END IF;
+
+  IF NOT EXISTS (
+    SELECT 1 FROM audit_logs
+    WHERE user_id = target_id
+      AND event = 'ops.admin_access_recovery.2026-08-30'
+      AND metadata->>'email' = target_email
+  ) THEN
+    RAISE EXCEPTION 'admin_access_recovery_audit_marker_missing';
+  END IF;
+END
+$$;
