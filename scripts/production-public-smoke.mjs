@@ -10,14 +10,30 @@ async function expectJson(path, expectedStatus, options = {}) {
   return body;
 }
 
+async function expectMissingToken(label, path, options = {}) {
+  const body = await expectJson(path, 401, options);
+  if (body.error !== 'missing_token') {
+    throw new Error(`${label} did not fail closed with missing_token`);
+  }
+  console.log(`PASS ${label}: unauthenticated request blocked`);
+}
+
 const ready = await expectJson('/ready', 200);
 if (ready.configured !== true) throw new Error('/ready did not report configured=true');
 if (!ready.database) throw new Error('/ready did not report a database');
 
-const realtime = await expectJson('/api/projects/tradevision/realtime/events', 401);
-if (realtime.error !== 'missing_token') {
-  throw new Error('Realtime endpoint did not fail closed with missing_token');
-}
+await expectMissingToken('realtime read', '/api/projects/tradevision/realtime/events');
+await expectMissingToken('realtime publish', '/api/projects/tradevision/realtime/publish', {
+  method: 'POST',
+  headers: { 'content-type': 'application/json' },
+  body: JSON.stringify({ topic: 'smoke', event_type: 'probe', payload: { safe: true } }),
+});
+await expectMissingToken('storage list', '/v1/projects/tradevision/storage?bucket=default&limit=1');
+await expectMissingToken('storage write', '/v1/projects/tradevision/storage/default/production-smoke.txt', {
+  method: 'POST',
+  headers: { 'content-type': 'application/json' },
+  body: JSON.stringify({ content_base64: 'c21va2U=', content_type: 'text/plain', visibility: 'private' }),
+});
 
 const recoveryProbeEmail = `aureon-production-smoke-${Date.now()}@example.invalid`;
 const recovery = await expectJson('/auth/request-password-reset', 202, {
@@ -37,6 +53,9 @@ console.log(JSON.stringify({
   status: 'PASS',
   base_url: baseUrl,
   ready: true,
-  realtime_unauthenticated: 'blocked',
+  realtime_unauthenticated_read: 'blocked',
+  realtime_unauthenticated_publish: 'blocked',
+  storage_unauthenticated_read: 'blocked',
+  storage_unauthenticated_write: 'blocked',
   password_recovery_privacy: 'generic_accepted_response',
 }));
