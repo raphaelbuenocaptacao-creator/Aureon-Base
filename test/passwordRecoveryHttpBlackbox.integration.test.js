@@ -86,6 +86,11 @@ test('Password recovery HTTP black-box enforces expiration, revocation, one-time
     const first = await issuePasswordResetToken({ query: testQuery, userId });
     assert.match(first.token, /^[A-Za-z0-9_-]{32,128}$/);
 
+    await adminDb.query(
+      "update password_reset_tokens set created_at=now()-interval '2 minutes' where user_id=$1 and token_hash=$2",
+      [userId, sha256(first.token)],
+    );
+
     const second = await issuePasswordResetToken({ query: testQuery, userId });
     assert.notEqual(second.token, first.token);
 
