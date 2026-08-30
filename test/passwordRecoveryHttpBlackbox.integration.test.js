@@ -33,7 +33,7 @@ async function postJson(baseUrl, path, body) {
 
 const sha256 = value => createHash('sha256').update(value).digest('hex');
 
-test('Password recovery HTTP black-box enforces expiration, revocation, one-time use and session invalidation', { skip: !databaseUrl || !jwtSecret }, async () => {
+test('Password recovery HTTP black-box enforces expiration, revocation, one-time use, session invalidation and login transition', { skip: !databaseUrl || !jwtSecret }, async () => {
   const adminDb = new Client({ connectionString: databaseUrl });
   await adminDb.connect();
 
@@ -112,8 +112,18 @@ test('Password recovery HTTP black-box enforces expiration, revocation, one-time
     assert.equal(await bcrypt.compare(newPassword, userRow.password_hash), true, 'new password must be persisted');
     assert.equal(await bcrypt.compare(oldPassword, userRow.password_hash), false, 'old password must no longer authenticate');
 
+    response = await postJson(baseUrl, '/auth/login', { email: userEmail, password: oldPassword });
+    assert.equal(response.status, 401, 'old password must fail through the public login route after reset');
+
+    response = await postJson(baseUrl, '/auth/login', { email: userEmail, password: newPassword });
+    assert.equal(response.status, 200, await response.text());
+    const loginBody = await response.json();
+    assert.equal(loginBody.user?.id, userId, 'new password must authenticate the same account');
+    assert.match(loginBody.access_token || '', /^[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+$/);
+    assert.match(loginBody.refresh_token || '', /^[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+$/);
+
     const session = (await adminDb.query('select revoked_at from sessions where id=$1', [sessionId])).rows[0];
-    assert.ok(session.revoked_at, 'all active sessions must be revoked after password reset');
+    assert.ok(session.revoked_at, 'all sessions that existed before password reset must be revoked');
 
     response = await postJson(baseUrl, '/auth/reset-password', {
       email: userEmail,
