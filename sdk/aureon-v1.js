@@ -100,6 +100,22 @@ export function createAureon(baseUrl, options = {}) {
           remove: key => request(`${base}/${encodedBucket}/${encodeStorageKey(key)}`, { method: 'DELETE' }),
         };
       },
+      realtime() {
+        const base = `/api/projects/${projectSlug}/realtime`;
+        return {
+          publish(topic, eventType, payload = {}) {
+            return request(`${base}/publish`, {
+              method: 'POST',
+              body: JSON.stringify({ topic, event_type: eventType, payload }),
+            });
+          },
+          events({ after = 0, limit = 100, topic = null } = {}) {
+            const params = new URLSearchParams({ after: String(after), limit: String(limit) });
+            if (topic !== null && topic !== undefined && String(topic) !== '') params.set('topic', String(topic));
+            return request(`${base}/events?${params.toString()}`);
+          },
+        };
+      },
     };
   }
 
@@ -147,6 +163,10 @@ export function createAureon(baseUrl, options = {}) {
     storage(bucket = 'default', projectSlug = options.project) {
       if (!projectSlug) throw new Error('Aureon project slug is required.');
       return project(projectSlug).storage(bucket);
+    },
+    realtime(projectSlug = options.project) {
+      if (!projectSlug) throw new Error('Aureon project slug is required.');
+      return project(projectSlug).realtime();
     },
   };
 }
