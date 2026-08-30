@@ -2,6 +2,7 @@ import crypto from 'node:crypto';
 import { validateProductionConfig } from './validateProductionConfig.js';
 
 const DEFAULT_TTL_MINUTES = 10;
+const DEFAULT_COOLDOWN_SECONDS = 60;
 
 export function hashResetToken(token) {
   return crypto.createHash('sha256').update(String(token)).digest('hex');
@@ -19,29 +20,54 @@ export function assertPasswordRecoveryRuntimeConfigured(env = process.env) {
   throw error;
 }
 
-export async function issuePasswordResetToken({ query, userId, requestedIp = null, ttlMinutes = DEFAULT_TTL_MINUTES }) {
+export async function issuePasswordResetToken({
+  query,
+  userId,
+  requestedIp = null,
+  ttlMinutes = DEFAULT_TTL_MINUTES,
+  cooldownSeconds = DEFAULT_COOLDOWN_SECONDS,
+}) {
   if (typeof query !== 'function') throw new TypeError('query_required');
   if (!userId) throw new TypeError('user_id_required');
   assertPasswordRecoveryRuntimeConfigured();
   const ttl = Math.min(Math.max(Number(ttlMinutes) || DEFAULT_TTL_MINUTES, 5), 60);
+  const cooldown = Math.min(Math.max(Number(cooldownSeconds) || DEFAULT_COOLDOWN_SECONDS, 30), 900);
   const token = generateResetToken();
   const tokenHash = hashResetToken(token);
 
-  await query(
+  const result = await query(
     `with lock_user as materialized (
        select pg_advisory_xact_lock(hashtextextended($1::text, 0))
+     ), recent as materialized (
+       select exists(
+         select 1
+           from password_reset_tokens, lock_user
+          where user_id=$1::uuid
+            and created_at > now()-($5 || ' seconds')::interval
+       ) as blocked
      ), revoked as (
        update password_reset_tokens
           set used_at=coalesce(used_at, now())
-        from lock_user
-       where user_id=$1::uuid and used_at is null
+        from lock_user, recent
+       where user_id=$1::uuid
+         and used_at is null
+         and recent.blocked=false
        returning id
      )
      insert into password_reset_tokens(user_id,token_hash,expires_at,requested_ip)
      select $1::uuid,$2,now()+($3 || ' minutes')::interval,$4
-       from lock_user`,
-    [userId, tokenHash, String(ttl), requestedIp],
+       from lock_user, recent
+      where recent.blocked=false
+     returning id`,
+    [userId, tokenHash, String(ttl), requestedIp, String(cooldown)],
   );
+
+  if (!result?.rows?.[0]) {
+    const error = new Error('password_reset_cooldown');
+    error.code = 'PASSWORD_RESET_COOLDOWN';
+    error.retryAfterSeconds = cooldown;
+    throw error;
+  }
 
   return { token, expiresInMinutes: ttl };
 }
