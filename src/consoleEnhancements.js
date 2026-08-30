@@ -12,6 +12,15 @@ export function runConsoleEnhancements() {
     return response.json().catch(() => null);
   }
 
+  const compactJson = value => {
+    try {
+      const text = JSON.stringify(value ?? {});
+      return text.length > 180 ? `${text.slice(0, 177)}…` : text;
+    } catch {
+      return '{}';
+    }
+  };
+
   async function decorateProjects() {
     const content = document.querySelector('#content');
     if (!content || content.dataset.githubEnhanced === '1') return;
@@ -39,10 +48,11 @@ export function runConsoleEnhancements() {
     if (!Array.isArray(projects)) return;
     const project = projects.find(item => item.name === title);
     if (!project) return;
-    const [environments, keys, storage] = await Promise.all([
+    const [environments, keys, storage, collections] = await Promise.all([
       get(`/v1/admin/projects/${encodeURIComponent(project.slug)}/environments`),
       get(`/v1/admin/projects/${encodeURIComponent(project.slug)}/keys`),
       get(`/v1/projects/${encodeURIComponent(project.slug)}/storage?bucket=default&limit=100`),
+      get(`/v1/admin/projects/${encodeURIComponent(project.slug)}/collections`),
     ]);
     const envRows = Array.isArray(environments) ? environments.map(env => `<tr><td><b>${esc(env.name)}</b></td><td>${Number(env.records || 0)}</td><td><span class="pill ${env.is_active ? 'ok' : ''}">${env.is_active ? 'ativo' : 'inativo'}</span></td></tr>`).join('') : '';
     const keyRows = Array.isArray(keys) ? keys.slice(0, 8).map(key => `<tr><td>${esc(key.name)}</td><td class="mono">${esc(key.key_prefix)}</td><td>${esc((key.scopes || []).join(', '))}</td><td><span class="pill ${key.is_active ? 'ok' : ''}">${key.is_active ? 'ativa' : 'revogada'}</span></td></tr>`).join('') : '';
@@ -56,8 +66,42 @@ export function runConsoleEnhancements() {
       </div>
       <div class="panel" data-storage-panel><div class="panel-head"><h2>Storage · bucket default</h2><span class="pill">${Array.isArray(storage) ? storage.length : 0} objetos · ${storageBytes.toLocaleString('pt-BR')} B</span></div>${storageRows ? `<table><thead><tr><th>Objeto</th><th>Tipo</th><th>Tamanho</th><th>Visibilidade</th></tr></thead><tbody>${storageRows}</tbody></table>` : '<div class="empty">Nenhum objeto no bucket default ou Storage indisponível.</div>'}</div>
       <div class="panel" data-api-keys-panel><div class="panel-head"><h2>API Keys</h2><span class="pill">segredos nunca são exibidos novamente</span></div>${keyRows ? `<table><thead><tr><th>Nome</th><th>Prefixo</th><th>Escopos</th><th>Status</th></tr></thead><tbody>${keyRows}</tbody></table>` : '<div class="empty">Nenhuma API key criada.</div>'}</div>`);
+
+    const collectionTable = [...content.querySelectorAll('.panel')].find(panel => panel.querySelector('h2')?.textContent?.includes('Database / Coleções'))?.querySelector('table');
+    if (collectionTable && Array.isArray(collections)) {
+      const rows = [...collectionTable.querySelectorAll('tbody tr')];
+      rows.forEach((row, index) => {
+        const collection = collections[index];
+        if (!collection || row.querySelector('[data-view-collection]')) return;
+        const cell = document.createElement('td');
+        cell.innerHTML = `<button class="mini" data-view-collection="${esc(collection.name)}" data-view-project="${esc(project.slug)}">Ver registros</button>`;
+        row.appendChild(cell);
+      });
+      const head = collectionTable.querySelector('thead tr');
+      if (head && !head.querySelector('[data-data-view-head]')) {
+        const th = document.createElement('th');
+        th.dataset.dataViewHead = '1';
+        th.textContent = 'Dados';
+        head.appendChild(th);
+      }
+    }
     content.dataset.projectMetaEnhanced = '1';
   }
+
+  async function showRecords(slug, collection) {
+    const records = await get(`/v1/projects/${encodeURIComponent(slug)}/data/${encodeURIComponent(collection)}?environment=production&limit=50`);
+    const content = document.querySelector('#content');
+    if (!content) return;
+    content.querySelector('[data-record-viewer]')?.remove();
+    const rows = Array.isArray(records) ? records.map(record => `<tr><td class="mono">${esc(record.id)}</td><td class="mono">${esc(compactJson(record.data))}</td><td>${esc(record.owner_user_id || '—')}</td><td>${record.updated_at ? new Date(record.updated_at).toLocaleString('pt-BR') : '—'}</td></tr>`).join('') : '';
+    content.insertAdjacentHTML('beforeend', `<div class="panel" data-record-viewer><div class="panel-head"><h2>Registros · ${esc(collection)} · production</h2><span class="pill">somente leitura · até 50 registros</span></div>${rows ? `<table><thead><tr><th>ID</th><th>Dados</th><th>Proprietário</th><th>Atualizado</th></tr></thead><tbody>${rows}</tbody></table>` : '<div class="empty">Nenhum registro encontrado ou acesso indisponível.</div>'}</div>`);
+  }
+
+  document.addEventListener('click', event => {
+    const button = event.target.closest('[data-view-collection]');
+    if (!button) return;
+    showRecords(button.dataset.viewProject, button.dataset.viewCollection).catch(() => {});
+  });
 
   async function enhance() {
     try { await decorateProjects(); await decorateProjectDetail(); } catch { /* core console remains usable */ }
