@@ -36,8 +36,7 @@ SELECT slug, name, 0, github_repo, github_url
 FROM repo_catalog
 ON CONFLICT (slug) DO UPDATE
 SET github_repo = EXCLUDED.github_repo,
-    github_url = EXCLUDED.github_url,
-    updated_at = now();
+    github_url = EXCLUDED.github_url;
 
 INSERT INTO project_environments(project_id, name)
 SELECT p.id, env.name
