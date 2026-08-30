@@ -4,12 +4,29 @@ export function runConsoleEnhancements() {
     '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;',
   }[char]));
 
-  async function get(path) {
+  async function requestJson(path, options = {}) {
     const token = localStorage.getItem('aureon_access_token') || '';
-    if (!token) return null;
-    const response = await fetch(API + path, { headers: { Authorization: `Bearer ${token}` } });
-    if (!response.ok) return null;
-    return response.json().catch(() => null);
+    if (!token) throw new Error('auth_required');
+    const response = await fetch(API + path, {
+      ...options,
+      headers: {
+        Authorization: `Bearer ${token}`,
+        ...(options.body ? { 'Content-Type': 'application/json' } : {}),
+        ...(options.headers || {}),
+      },
+    });
+    if (response.status === 204) return null;
+    const data = await response.json().catch(() => ({}));
+    if (!response.ok) throw new Error(data.error || `http_${response.status}`);
+    return data;
+  }
+
+  async function get(path) {
+    try {
+      return await requestJson(path);
+    } catch {
+      return null;
+    }
   }
 
   const compactJson = value => {
@@ -55,7 +72,7 @@ export function runConsoleEnhancements() {
       get(`/v1/admin/projects/${encodeURIComponent(project.slug)}/collections`),
     ]);
     const envRows = Array.isArray(environments) ? environments.map(env => `<tr><td><b>${esc(env.name)}</b></td><td>${Number(env.records || 0)}</td><td><span class="pill ${env.is_active ? 'ok' : ''}">${env.is_active ? 'ativo' : 'inativo'}</span></td></tr>`).join('') : '';
-    const keyRows = Array.isArray(keys) ? keys.slice(0, 8).map(key => `<tr><td>${esc(key.name)}</td><td class="mono">${esc(key.key_prefix)}</td><td>${esc((key.scopes || []).join(', '))}</td><td><span class="pill ${key.is_active ? 'ok' : ''}">${key.is_active ? 'ativa' : 'revogada'}</span></td></tr>`).join('') : '';
+    const keyRows = Array.isArray(keys) ? keys.slice(0, 20).map(key => `<tr><td>${esc(key.name)}</td><td class="mono">${esc(key.key_prefix)}</td><td>${esc((key.scopes || []).join(', '))}</td><td><span class="pill ${key.is_active ? 'ok' : ''}">${key.is_active ? 'ativa' : 'revogada'}</span></td><td>${key.is_active ? `<button class="mini" data-revoke-key="${esc(key.id)}" data-key-project="${esc(project.slug)}" data-key-name="${esc(key.name)}">Revogar</button>` : '—'}</td></tr>`).join('') : '';
     const storageRows = Array.isArray(storage) ? storage.slice(0, 25).map(object => `<tr><td class="mono">${esc(object.object_key)}</td><td>${esc(object.content_type || '—')}</td><td>${Number(object.size_bytes || 0).toLocaleString('pt-BR')} B</td><td><span class="pill">${esc(object.visibility || 'private')}</span></td></tr>`).join('') : '';
     const storageBytes = Array.isArray(storage) ? storage.reduce((sum, object) => sum + Number(object.size_bytes || 0), 0) : 0;
     const github = project.github_url ? `<a href="${esc(project.github_url)}" target="_blank" rel="noopener noreferrer" class="mini gold" style="text-decoration:none">Abrir GitHub ↗</a>` : '<span class="pill">GitHub não vinculado</span>';
@@ -65,7 +82,10 @@ export function runConsoleEnhancements() {
         <div class="panel"><div class="panel-head"><h2>Ambientes</h2></div>${envRows ? `<table><thead><tr><th>Ambiente</th><th>Registros</th><th>Status</th></tr></thead><tbody>${envRows}</tbody></table>` : '<div class="empty">Ambientes indisponíveis.</div>'}</div>
       </div>
       <div class="panel" data-storage-panel><div class="panel-head"><h2>Storage · bucket default</h2><span class="pill">${Array.isArray(storage) ? storage.length : 0} objetos · ${storageBytes.toLocaleString('pt-BR')} B</span></div>${storageRows ? `<table><thead><tr><th>Objeto</th><th>Tipo</th><th>Tamanho</th><th>Visibilidade</th></tr></thead><tbody>${storageRows}</tbody></table>` : '<div class="empty">Nenhum objeto no bucket default ou Storage indisponível.</div>'}</div>
-      <div class="panel" data-api-keys-panel><div class="panel-head"><h2>API Keys</h2><span class="pill">segredos nunca são exibidos novamente</span></div>${keyRows ? `<table><thead><tr><th>Nome</th><th>Prefixo</th><th>Escopos</th><th>Status</th></tr></thead><tbody>${keyRows}</tbody></table>` : '<div class="empty">Nenhuma API key criada.</div>'}</div>`);
+      <div class="panel" data-api-keys-panel>
+        <div class="panel-head"><h2>API Keys</h2><div class="actions"><span class="pill">segredos aparecem somente na criação</span><button class="mini gold" data-create-key="${esc(project.slug)}">+ Nova chave</button></div></div>
+        ${keyRows ? `<table><thead><tr><th>Nome</th><th>Prefixo</th><th>Escopos</th><th>Status</th><th>Ação</th></tr></thead><tbody>${keyRows}</tbody></table>` : '<div class="empty">Nenhuma API key criada.</div>'}
+      </div>`);
 
     const collectionTable = [...content.querySelectorAll('.panel')].find(panel => panel.querySelector('h2')?.textContent?.includes('Database / Coleções'))?.querySelector('table');
     if (collectionTable && Array.isArray(collections)) {
@@ -97,10 +117,58 @@ export function runConsoleEnhancements() {
     content.insertAdjacentHTML('beforeend', `<div class="panel" data-record-viewer><div class="panel-head"><h2>Registros · ${esc(collection)} · production</h2><span class="pill">somente leitura · até 50 registros</span></div>${rows ? `<table><thead><tr><th>ID</th><th>Dados</th><th>Proprietário</th><th>Atualizado</th></tr></thead><tbody>${rows}</tbody></table>` : '<div class="empty">Nenhum registro encontrado ou acesso indisponível.</div>'}</div>`);
   }
 
+  async function createApiKey(slug) {
+    const name = window.prompt('Nome da nova API key (ex.: integracao-vercel):')?.trim();
+    if (!name) return;
+    const scopeInput = window.prompt('Escopos separados por vírgula: read, write, admin', 'read')?.trim();
+    if (!scopeInput) return;
+    const scopes = [...new Set(scopeInput.split(',').map(value => value.trim().toLowerCase()).filter(Boolean))];
+    if (!scopes.length || scopes.some(scope => !['read', 'write', 'admin'].includes(scope))) {
+      window.alert('Escopos inválidos. Use somente read, write e/ou admin.');
+      return;
+    }
+    const created = await requestJson(`/v1/admin/projects/${encodeURIComponent(slug)}/keys`, {
+      method: 'POST',
+      body: JSON.stringify({ name, scopes }),
+    });
+    if (!created?.api_key) throw new Error('api_key_not_returned');
+    const panel = document.querySelector('[data-api-keys-panel]');
+    panel?.querySelector('[data-new-key-secret]')?.remove();
+    panel?.insertAdjacentHTML('afterbegin', `<div class="empty" data-new-key-secret style="text-align:left"><b>Chave criada. Copie agora — ela não será mostrada novamente.</b><div class="mono" style="margin-top:8px;word-break:break-all">${esc(created.api_key)}</div><button class="mini gold" data-copy-new-key style="margin-top:8px">Copiar</button></div>`);
+  }
+
+  async function revokeApiKey(slug, keyId, name) {
+    if (!window.confirm(`Revogar a chave "${name}"? Aplicações que usam essa chave deixarão de autenticar.`)) return;
+    await requestJson(`/v1/admin/projects/${encodeURIComponent(slug)}/keys/${encodeURIComponent(keyId)}`, { method: 'DELETE' });
+    const content = document.querySelector('#content');
+    if (content) {
+      delete content.dataset.projectMetaEnhanced;
+      content.querySelectorAll('[data-project-meta],[data-storage-panel],[data-api-keys-panel]').forEach(node => node.remove());
+    }
+    await decorateProjectDetail();
+  }
+
   document.addEventListener('click', event => {
-    const button = event.target.closest('[data-view-collection]');
-    if (!button) return;
-    showRecords(button.dataset.viewProject, button.dataset.viewCollection).catch(() => {});
+    const viewButton = event.target.closest('[data-view-collection]');
+    if (viewButton) {
+      showRecords(viewButton.dataset.viewProject, viewButton.dataset.viewCollection).catch(() => {});
+      return;
+    }
+    const createButton = event.target.closest('[data-create-key]');
+    if (createButton) {
+      createApiKey(createButton.dataset.createKey).catch(error => window.alert(`Não foi possível criar a chave: ${error.message}`));
+      return;
+    }
+    const revokeButton = event.target.closest('[data-revoke-key]');
+    if (revokeButton) {
+      revokeApiKey(revokeButton.dataset.keyProject, revokeButton.dataset.revokeKey, revokeButton.dataset.keyName).catch(error => window.alert(`Não foi possível revogar a chave: ${error.message}`));
+      return;
+    }
+    const copyButton = event.target.closest('[data-copy-new-key]');
+    if (copyButton) {
+      const value = copyButton.closest('[data-new-key-secret]')?.querySelector('.mono')?.textContent || '';
+      if (value && navigator.clipboard) navigator.clipboard.writeText(value).then(() => { copyButton.textContent = 'Copiada'; }).catch(() => {});
+    }
   });
 
   async function enhance() {
