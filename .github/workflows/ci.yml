@@ -58,12 +58,13 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
+          : > production-public-smoke.log
           for attempt in {1..24}; do
-            if npm run smoke:production; then
+            if npm run smoke:production 2>&1 | tee production-public-smoke.log; then
               exit 0
             fi
             if [ "$attempt" -eq 24 ]; then
-              echo "production_smoke_failed_after_retries"
+              echo "production_smoke_failed_after_retries" | tee -a production-public-smoke.log
               exit 1
             fi
             sleep 10
@@ -77,8 +78,19 @@ jobs:
           AUREON_E2E_B_PROJECT: ${{ secrets.AUREON_E2E_B_PROJECT }}
         run: |
           set -euo pipefail
+          : > production-auth-smoke.log
           if [ -z "${AUREON_E2E_A_TOKEN:-}" ] || [ -z "${AUREON_E2E_B_TOKEN:-}" ] || [ -z "${AUREON_E2E_A_PROJECT:-}" ] || [ -z "${AUREON_E2E_B_PROJECT:-}" ]; then
-            echo "authenticated_production_smoke=SKIP (test credentials not configured)"
+            echo "authenticated_production_smoke=SKIP reason=test_credentials_not_configured" | tee production-auth-smoke.log
             exit 0
           fi
-          npm run smoke:production:auth
+          npm run smoke:production:auth 2>&1 | tee production-auth-smoke.log
+      - name: Persist production validation evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: production-validation-evidence-${{ github.sha }}
+          path: |
+            production-public-smoke.log
+            production-auth-smoke.log
+          if-no-files-found: warn
+          retention-days: 30
