@@ -30,7 +30,7 @@ async function postJson(baseUrl, path, body) {
   });
 }
 
-test('failed password-recovery delivery returns generic response and revokes the fresh token', { skip: !databaseUrl || !jwtSecret }, async () => {
+test('failed password-recovery delivery returns generic response, revokes the fresh token, and keeps audit metadata secret-safe', { skip: !databaseUrl || !jwtSecret }, async () => {
   const adminDb = new Client({ connectionString: databaseUrl });
   await adminDb.connect();
 
@@ -80,6 +80,27 @@ test('failed password-recovery delivery returns generic response and revokes the
       [userId],
     );
     assert.equal(activeTokens.rows[0].count, 0, 'no usable reset token may survive failed delivery');
+
+    const auditRows = await adminDb.query(
+      `select metadata
+         from audit_logs
+        where user_id=$1 and event='user.password_reset_requested'
+        order by created_at desc
+        limit 1`,
+      [userId],
+    );
+    assert.equal(auditRows.rows.length, 1, 'recovery request should retain a non-secret audit event');
+    const metadata = auditRows.rows[0].metadata || {};
+    assert.equal(metadata.delivered, false, 'audit may record delivery outcome');
+    assert.ok(Number.isFinite(Number(metadata.expires_in_minutes)), 'audit may record expiry duration');
+    const serializedMetadata = JSON.stringify(metadata).toLowerCase();
+    assert.equal(serializedMetadata.includes('token'), false, 'audit metadata must not contain token fields');
+    assert.equal(serializedMetadata.includes(String(tokenRows.rows[0].token_hash).toLowerCase()), false, 'audit metadata must not contain the persisted token hash');
+    assert.deepEqual(
+      Object.keys(metadata).sort(),
+      ['delivered', 'expires_in_minutes'],
+      'recovery audit metadata must stay limited to the documented secret-safe fields',
+    );
   } finally {
     child.kill('SIGTERM');
     await new Promise(resolve => child.once('exit', resolve)).catch(() => {});
