@@ -1,4 +1,5 @@
 import crypto from 'node:crypto';
+import { validateProductionConfig } from './validateProductionConfig.js';
 
 const DEFAULT_TTL_MINUTES = 10;
 
@@ -10,9 +11,18 @@ export function generateResetToken() {
   return crypto.randomBytes(32).toString('base64url');
 }
 
+export function assertPasswordRecoveryRuntimeConfigured(env = process.env) {
+  const validation = validateProductionConfig(env);
+  if (validation.ok) return true;
+  const error = new Error('password_recovery_not_configured');
+  error.code = 'PASSWORD_RECOVERY_NOT_CONFIGURED';
+  throw error;
+}
+
 export async function issuePasswordResetToken({ query, userId, requestedIp = null, ttlMinutes = DEFAULT_TTL_MINUTES }) {
   if (typeof query !== 'function') throw new TypeError('query_required');
   if (!userId) throw new TypeError('user_id_required');
+  assertPasswordRecoveryRuntimeConfigured();
   const ttl = Math.min(Math.max(Number(ttlMinutes) || DEFAULT_TTL_MINUTES, 5), 60);
   const token = generateResetToken();
   const tokenHash = hashResetToken(token);
