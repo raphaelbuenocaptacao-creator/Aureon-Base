@@ -79,10 +79,24 @@ jobs:
         run: |
           set -euo pipefail
           : > production-auth-smoke.log
-          if [ -z "${AUREON_E2E_A_TOKEN:-}" ] || [ -z "${AUREON_E2E_B_TOKEN:-}" ] || [ -z "${AUREON_E2E_A_PROJECT:-}" ] || [ -z "${AUREON_E2E_B_PROJECT:-}" ]; then
+
+          configured=0
+          for name in AUREON_E2E_A_TOKEN AUREON_E2E_B_TOKEN AUREON_E2E_A_PROJECT AUREON_E2E_B_PROJECT; do
+            if [ -n "${!name:-}" ]; then
+              configured=$((configured + 1))
+            fi
+          done
+
+          if [ "$configured" -eq 0 ]; then
             echo "authenticated_production_smoke=SKIP reason=test_credentials_not_configured" | tee production-auth-smoke.log
             exit 0
           fi
+
+          if [ "$configured" -ne 4 ]; then
+            echo "authenticated_production_smoke=FAIL reason=partial_test_credentials configured=${configured}/4" | tee production-auth-smoke.log
+            exit 1
+          fi
+
           npm run smoke:production:auth 2>&1 | tee production-auth-smoke.log
       - name: Persist production validation evidence
         if: always()
