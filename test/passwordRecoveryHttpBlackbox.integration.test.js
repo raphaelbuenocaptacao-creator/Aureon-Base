@@ -116,7 +116,7 @@ test('Password recovery HTTP black-box enforces expiration, revocation, one-time
     assert.equal(response.status, 401, 'old password must fail through the public login route after reset');
 
     response = await postJson(baseUrl, '/auth/login', { email: userEmail, password: newPassword });
-    assert.equal(response.status, 200, await response.text());
+    assert.equal(response.status, 200, 'new password must authenticate through the public login route');
     const loginBody = await response.json();
     assert.equal(loginBody.user?.id, userId, 'new password must authenticate the same account');
     assert.match(loginBody.access_token || '', /^[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+$/);
