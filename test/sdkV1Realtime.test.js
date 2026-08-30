@@ -65,3 +65,50 @@ test('v1 SDK realtime requires a project when no default is configured', () => {
   const client = createAureon('https://aureon.example', { storage: memoryStorage() });
   assert.throws(() => client.realtime(), /project slug is required/i);
 });
+
+test('v1 SDK rotates refreshed tokens and clears them on sign-out', async () => {
+  const originalFetch = globalThis.fetch;
+  const storage = memoryStorage();
+  const calls = [];
+  let meAttempts = 0;
+
+  globalThis.fetch = async (url, options = {}) => {
+    const href = String(url);
+    calls.push({ url: href, options });
+    if (href.endsWith('/auth/login')) {
+      return jsonResponse({ access_token: 'access-old', refresh_token: 'refresh-old' });
+    }
+    if (href.endsWith('/me')) {
+      meAttempts += 1;
+      if (meAttempts === 1) return jsonResponse({ error: 'token_expired' }, 401);
+      return jsonResponse({ id: 'user-1' });
+    }
+    if (href.endsWith('/auth/refresh')) {
+      assert.deepEqual(JSON.parse(options.body), { refresh_token: 'refresh-old' });
+      return jsonResponse({ access_token: 'access-new', refresh_token: 'refresh-new' });
+    }
+    if (href.endsWith('/auth/logout')) {
+      assert.equal(options.headers.Authorization, 'Bearer access-new');
+      assert.deepEqual(JSON.parse(options.body), { refresh_token: 'refresh-new' });
+      return new Response(null, { status: 204 });
+    }
+    return jsonResponse({ error: 'unexpected_request' }, 500);
+  };
+
+  try {
+    const client = createAureon('https://aureon.example', { storage });
+    await client.auth.signIn({ email: 'sdk@example.com', password: 'not-a-real-secret' });
+    const me = await client.auth.me();
+    assert.equal(me.id, 'user-1');
+    assert.equal(storage.getItem('aureon_access_token'), 'access-new');
+    assert.equal(storage.getItem('aureon_refresh_token'), 'refresh-new');
+    assert.equal(calls.find(call => call.url.endsWith('/me') && call.options.headers.Authorization === 'Bearer access-new') !== undefined, true);
+
+    await client.auth.signOut();
+    assert.equal(storage.getItem('aureon_access_token'), null);
+    assert.equal(storage.getItem('aureon_refresh_token'), null);
+    assert.equal(client.auth.isAuthenticated(), false);
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
+});
