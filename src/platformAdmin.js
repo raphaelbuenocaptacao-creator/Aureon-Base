@@ -26,7 +26,7 @@ export function registerPlatformAdminRoutes({ app, query, requireAuth, requireSu
 
   app.get('/v1/admin/projects', requireAuth, requireSuperAdmin, async (_req, res) => {
     const result = await query(`
-      select p.id,p.slug,p.name,p.trial_days,p.is_active,p.created_at,
+      select p.id,p.slug,p.name,p.trial_days,p.is_active,p.github_repo,p.github_url,p.created_at,
              count(distinct pu.user_id)::int as users,
              count(distinct pc.name)::int as collections,
              count(distinct pr.id)::int as records

@@ -1,4 +1,5 @@
 import { runAureonConsole } from './consoleClient.js';
+import { runConsoleEnhancements } from './consoleEnhancements.js';
 
 const manifest = {
   name: 'Aureon Base',
@@ -17,7 +18,7 @@ const manifest = {
 
 const iconSvg = `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512"><rect width="512" height="512" rx="112" fill="#08090b"/><defs><linearGradient id="g" x1="0" y1="0" x2="1" y2="1"><stop stop-color="#f0cc78"/><stop offset="1" stop-color="#9a6818"/></linearGradient></defs><rect x="86" y="86" width="340" height="340" rx="96" fill="url(#g)"/><path d="M256 144 151 368h58l20-48h54l20 48h58L256 144Zm0 83 25 60h-50l25-60Z" fill="#111"/></svg>`;
 
-const serviceWorker = `const CACHE='aureon-console-v3';
+const serviceWorker = `const CACHE='aureon-console-v4';
 const SHELL=['/','/console','/console/app.js','/manifest.webmanifest','/icon.svg'];
 self.addEventListener('install',event=>{event.waitUntil(caches.open(CACHE).then(cache=>cache.addAll(SHELL)));self.skipWaiting();});
 self.addEventListener('activate',event=>{event.waitUntil(caches.keys().then(keys=>Promise.all(keys.filter(key=>key!==CACHE).map(key=>caches.delete(key)))));self.clients.claim();});
@@ -118,6 +119,6 @@ export function registerConsoleRoutes({ app }) {
     res.type('application/javascript').set('Cache-Control', 'no-cache').send(serviceWorker);
   });
   app.get('/console/app.js', (_req, res) => {
-    res.type('application/javascript').send(`(${runAureonConsole.toString()})();if('serviceWorker' in navigator){navigator.serviceWorker.register('/sw.js').catch(()=>{});}`);
+    res.type('application/javascript').send(`(${runAureonConsole.toString()})();(${runConsoleEnhancements.toString()})();if('serviceWorker' in navigator){navigator.serviceWorker.register('/sw.js').catch(()=>{});}`);
   });
 }
