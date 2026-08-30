@@ -59,6 +59,11 @@ try {
   await b.projects.use(projectB).access();
   console.log('PASS tenant B own project access');
 
+  await a.projects.use(projectA).storage('default').list({ limit: 1 });
+  console.log('PASS tenant A own storage read');
+  await b.projects.use(projectB).storage('default').list({ limit: 1 });
+  console.log('PASS tenant B own storage read');
+
   await a.projects.use(projectA).realtime().events({ limit: 1 });
   console.log('PASS tenant A own realtime read');
   await b.projects.use(projectB).realtime().events({ limit: 1 });
@@ -66,6 +71,8 @@ try {
 
   await expectDenied('tenant A cannot access tenant B project', () => a.projects.use(projectB).access());
   await expectDenied('tenant B cannot access tenant A project', () => b.projects.use(projectA).access());
+  await expectDenied('tenant A cannot list tenant B storage', () => a.projects.use(projectB).storage('default').list({ limit: 1 }));
+  await expectDenied('tenant B cannot list tenant A storage', () => b.projects.use(projectA).storage('default').list({ limit: 1 }));
   await expectDenied('tenant A cannot read tenant B realtime', () => a.projects.use(projectB).realtime().events({ limit: 1 }));
   await expectDenied('tenant B cannot read tenant A realtime', () => b.projects.use(projectA).realtime().events({ limit: 1 }));
 
