@@ -22,10 +22,13 @@ async function waitForServer(baseUrl, child) {
   throw new Error('server did not become healthy');
 }
 
-async function requestReset(baseUrl, email) {
+async function requestReset(baseUrl, email, forwardedFor) {
   const response = await fetch(`${baseUrl}/auth/request-password-reset`, {
     method: 'POST',
-    headers: { 'content-type': 'application/json' },
+    headers: {
+      'content-type': 'application/json',
+      'x-forwarded-for': forwardedFor,
+    },
     body: JSON.stringify({ email }),
   });
   const body = await response.json();
@@ -64,9 +67,11 @@ test('Password reset request does not enumerate unknown or inactive accounts and
   try {
     await waitForServer(baseUrl, child);
 
-    const malformed = await requestReset(baseUrl, 'not-an-email');
-    const unknown = await requestReset(baseUrl, unknownEmail);
-    const inactive = await requestReset(baseUrl, inactiveEmail);
+    // Use distinct proxy client IPs so this test exercises anti-enumeration semantics
+    // independently from the dedicated reset-request abuse limiter.
+    const malformed = await requestReset(baseUrl, 'not-an-email', '198.51.100.11');
+    const unknown = await requestReset(baseUrl, unknownEmail, '198.51.100.12');
+    const inactive = await requestReset(baseUrl, inactiveEmail, '198.51.100.13');
 
     for (const result of [malformed, unknown, inactive]) {
       assert.equal(result.status, 202, 'reset request must always return accepted for non-eligible identities');
