@@ -146,11 +146,31 @@ test('Realtime HTTP black-box isolates publish and polling across projects', { s
     });
     await assertStatus(response, 403, 'revoked member must immediately lose realtime publish access');
 
-    const persisted = await admin.query(
+    let persisted = await admin.query(
       "select count(*)::int as count from realtime_events where project_id=$1 and event_type='order.after-revoke'",
       [projectB],
     );
     assert.equal(persisted.rows[0].count, 0, 'revoked member publish must not persist an event');
+
+    // Subscription state is also authoritative on every request. Restore the
+    // membership, then revoke paid access while keeping the same JWT valid.
+    await admin.query("insert into project_users(project_id,user_id,role) values ($1,$2,'owner')", [projectB, userB]);
+    await admin.query("update subscriptions set status='canceled',updated_at=now() where project_id=$1 and user_id=$2", [projectB, userB]);
+
+    response = await api(baseUrl, `/api/projects/${slugB}/realtime/events?after=0`, tokenB);
+    await assertStatus(response, 402, 'inactive subscription must immediately lose realtime polling access');
+
+    response = await api(baseUrl, `/api/projects/${slugB}/realtime/publish`, tokenB, {
+      method: 'POST',
+      body: JSON.stringify({ topic: 'orders', event_type: 'order.after-subscription-revoke', payload: { tenant: 'b' } }),
+    });
+    await assertStatus(response, 402, 'inactive subscription must immediately lose realtime publish access');
+
+    persisted = await admin.query(
+      "select count(*)::int as count from realtime_events where project_id=$1 and event_type='order.after-subscription-revoke'",
+      [projectB],
+    );
+    assert.equal(persisted.rows[0].count, 0, 'inactive subscription publish must not persist an event');
   } finally {
     child.kill('SIGTERM');
     await new Promise(resolve => child.once('exit', resolve)).catch(() => {});
