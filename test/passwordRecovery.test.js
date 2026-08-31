@@ -23,7 +23,8 @@ test('issuance is serialized per user in one PostgreSQL statement', async () => 
   await issuePasswordResetToken({ query, userId: 'user-lock', ttlMinutes: 10 });
 
   assert.equal(calls.length, 1);
-  assert.match(calls[0].sql, /pg_advisory_xact_lock\(hashtextextended\(\$1::text, 0\)\)/);
+  assert.match(calls[0].sql, /pg_try_advisory_xact_lock\(hashtextextended\(\$1::text, 0\)\)/);
+  assert.match(calls[0].sql, /not lock_user\.acquired/i);
   assert.match(calls[0].sql, /with lock_user as materialized/i);
   assert.match(calls[0].sql, /recent as materialized/i);
   assert.match(calls[0].sql, /update password_reset_tokens/i);
