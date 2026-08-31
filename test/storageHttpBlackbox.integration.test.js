@@ -139,6 +139,29 @@ test('Storage HTTP black-box isolates private objects across users and projects'
     assert.equal(response.status, 200);
     body = await response.json();
     assert.equal(body.content_base64, payloadV2);
+
+    // Membership is authoritative on every request. A still-valid JWT must not
+    // keep Storage access after membership has been revoked in PostgreSQL.
+    await admin.query('delete from project_users where project_id=$1 and user_id=$2', [sharedProject, userA]);
+
+    response = await api(baseUrl, `/v1/projects/${slug}/storage?bucket=private`, tokenA);
+    assert.equal(response.status, 403, 'revoked member must immediately lose storage listing access');
+
+    response = await api(baseUrl, `/v1/projects/${slug}/storage/private/a.txt`, tokenA);
+    assert.equal(response.status, 403, 'revoked member must immediately lose storage object read access');
+
+    const blockedKey = `revoked-${randomUUID()}.txt`;
+    response = await api(baseUrl, `/v1/projects/${slug}/storage/private/${blockedKey}`, tokenA, {
+      method: 'POST',
+      body: JSON.stringify({ content_base64: payloadV2, content_type: 'text/plain', visibility: 'private' }),
+    });
+    assert.equal(response.status, 403, 'revoked member must immediately lose storage write access');
+
+    const persisted = await admin.query(
+      'select count(*)::int as count from storage_objects where project_id=$1 and bucket=$2 and object_key=$3 and deleted_at is null',
+      [sharedProject, 'private', blockedKey],
+    );
+    assert.equal(persisted.rows[0].count, 0, 'revoked member write must not persist an object');
   } finally {
     child.kill('SIGTERM');
     await new Promise(resolve => child.once('exit', resolve)).catch(() => {});
