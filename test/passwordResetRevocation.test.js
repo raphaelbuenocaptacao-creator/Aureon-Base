@@ -15,7 +15,8 @@ test('issuing a replacement after cooldown revokes every prior unused token befo
 
   assert.notEqual(first.token, second.token);
   assert.equal(calls.length, 1);
-  assert.match(calls[0].sql, /pg_advisory_xact_lock/i);
+  assert.match(calls[0].sql, /pg_try_advisory_xact_lock/i);
+  assert.match(calls[0].sql, /not lock_user\.acquired/i);
   assert.match(calls[0].sql, /recent as materialized/i);
   assert.match(calls[0].sql, /update password_reset_tokens/i);
   assert.match(calls[0].sql, /used_at=coalesce\(used_at, now\(\)\)/i);

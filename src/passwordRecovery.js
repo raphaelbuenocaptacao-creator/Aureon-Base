@@ -37,18 +37,19 @@ export async function issuePasswordResetToken({
 
   const result = await query(
     `with lock_user as materialized (
-       select pg_advisory_xact_lock(hashtextextended($1::text, 0))
+       select pg_try_advisory_xact_lock(hashtextextended($1::text, 0)) as acquired
      ), recent as materialized (
-       select exists(
+       select (not lock_user.acquired) or exists(
          select 1
-           from password_reset_tokens, lock_user
+           from password_reset_tokens
           where user_id=$1::uuid
             and created_at > now()-($5 || ' seconds')::interval
        ) as blocked
+       from lock_user
      ), revoked as (
        update password_reset_tokens
           set used_at=coalesce(used_at, now())
-        from lock_user, recent
+        from recent
        where user_id=$1::uuid
          and used_at is null
          and recent.blocked=false
@@ -56,7 +57,7 @@ export async function issuePasswordResetToken({
      )
      insert into password_reset_tokens(user_id,token_hash,expires_at,requested_ip)
      select $1::uuid,$2,now()+($3 || ' minutes')::interval,$4
-       from lock_user, recent
+       from recent
       where recent.blocked=false
      returning id`,
     [userId, tokenHash, String(ttl), requestedIp, String(cooldown)],
