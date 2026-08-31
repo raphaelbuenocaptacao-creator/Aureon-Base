@@ -41,6 +41,7 @@ jobs:
         env:
           JWT_SECRET: ci-access-secret-32-characters-minimum-123456789
           JWT_REFRESH_SECRET: ci-refresh-secret-32-characters-minimum-123456
+          DATABASE_URL: postgresql://postgres:postgres@127.0.0.1:5432/aureon_ci
           INTEGRATION_DATABASE_URL: postgresql://postgres:postgres@127.0.0.1:5432/aureon_ci
         run: npm test
 
