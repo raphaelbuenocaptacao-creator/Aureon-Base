@@ -90,7 +90,10 @@ test('Realtime publish ignores forged actor/project fields and persists authenti
       }),
     });
 
-    assert.equal(response.status, 201, await response.text().catch(() => ''));
+    if (response.status !== 201) {
+      const errorBody = await response.text().catch(() => '');
+      assert.fail(`expected realtime publish 201, got ${response.status}: ${errorBody}`);
+    }
     const body = await response.json();
     assert.equal(body.event.actor_user_id, userA, 'server must derive actor from authenticated JWT');
     assert.equal(body.event.project_id, projectA, 'server must derive project from authorized URL tenant context');
