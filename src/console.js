@@ -2,6 +2,7 @@ import { runAureonConsole } from './consoleClient.js';
 import { runConsoleEnhancements } from './consoleEnhancements.js';
 
 const manifest = {
+  id: '/console',
   name: 'Aureon Base',
   short_name: 'Aureon',
   description: 'Console administrativo da infraestrutura Aureon Base.',
@@ -12,17 +13,23 @@ const manifest = {
   theme_color: '#08090b',
   lang: 'pt-BR',
   icons: [
-    { src: '/icon.svg', sizes: 'any', type: 'image/svg+xml', purpose: 'any maskable' },
+    { src: '/pwa/icon-192.svg', sizes: '192x192', type: 'image/svg+xml', purpose: 'any' },
+    { src: '/pwa/icon-512.svg', sizes: '512x512', type: 'image/svg+xml', purpose: 'any' },
+    { src: '/pwa/icon-maskable-512.svg', sizes: '512x512', type: 'image/svg+xml', purpose: 'maskable' },
   ],
 };
 
 const iconSvg = `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512"><rect width="512" height="512" rx="112" fill="#08090b"/><defs><linearGradient id="g" x1="0" y1="0" x2="1" y2="1"><stop stop-color="#f0cc78"/><stop offset="1" stop-color="#9a6818"/></linearGradient></defs><rect x="86" y="86" width="340" height="340" rx="96" fill="url(#g)"/><path d="M256 144 151 368h58l20-48h54l20 48h58L256 144Zm0 83 25 60h-50l25-60Z" fill="#111"/></svg>`;
+const maskableIconSvg = `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512"><rect width="512" height="512" fill="#08090b"/><defs><linearGradient id="g" x1="0" y1="0" x2="1" y2="1"><stop stop-color="#f0cc78"/><stop offset="1" stop-color="#9a6818"/></linearGradient></defs><circle cx="256" cy="256" r="190" fill="url(#g)"/><path d="M256 146 160 366h58l18-46h40l18 46h58L256 146Zm0 86 22 56h-44l22-56Z" fill="#111"/></svg>`;
 
-const serviceWorker = `const CACHE='aureon-console-v4';
-const SHELL=['/','/console','/console/app.js','/manifest.webmanifest','/icon.svg'];
+const serviceWorker = `const CACHE='aureon-console-v5-safe-shell';
+const SHELL=['/','/console','/console/app.js','/manifest.webmanifest','/icon.svg','/pwa/icon-192.svg','/pwa/icon-512.svg','/pwa/icon-maskable-512.svg'];
+const SHELL_PATHS=new Set(SHELL);
+const SENSITIVE_PARAMS=['token','access_token','refresh_token','password','passwd','session','session_id','api_key','apikey','code','credential','credentials'];
+const isSensitive=(request,url)=>request.headers.has('authorization')||request.headers.has('cookie')||SENSITIVE_PARAMS.some(key=>url.searchParams.has(key));
 self.addEventListener('install',event=>{event.waitUntil(caches.open(CACHE).then(cache=>cache.addAll(SHELL)));self.skipWaiting();});
 self.addEventListener('activate',event=>{event.waitUntil(caches.keys().then(keys=>Promise.all(keys.filter(key=>key!==CACHE).map(key=>caches.delete(key)))));self.clients.claim();});
-self.addEventListener('fetch',event=>{const request=event.request;if(request.method!=='GET')return;const url=new URL(request.url);if(url.origin!==self.location.origin)return;if(url.pathname.startsWith('/auth/')||url.pathname.startsWith('/v1/')||url.pathname==='/me'||url.pathname==='/health'||url.pathname==='/ready')return;event.respondWith(fetch(request).then(response=>{const copy=response.clone();caches.open(CACHE).then(cache=>cache.put(request,copy));return response;}).catch(()=>caches.match(request).then(hit=>hit||caches.match('/console'))));});`;
+self.addEventListener('fetch',event=>{const request=event.request;if(request.method!=='GET')return;const url=new URL(request.url);if(url.origin!==self.location.origin||isSensitive(request,url))return;if(request.mode==='navigate'){event.respondWith(fetch(request,{cache:'no-store'}).catch(()=>caches.match('/console')));return;}if(!SHELL_PATHS.has(url.pathname))return;event.respondWith(caches.match(request).then(hit=>hit||fetch(request).then(response=>{if(response&&response.ok&&response.type==='basic'){const copy=response.clone();event.waitUntil(caches.open(CACHE).then(cache=>cache.put(request,copy)));}return response;})));});`;
 
 const page = `<!doctype html>
 <html lang="pt-BR">
@@ -30,6 +37,7 @@ const page = `<!doctype html>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
 <meta name="theme-color" content="#08090b">
+<meta name="mobile-web-app-capable" content="yes">
 <meta name="apple-mobile-web-app-capable" content="yes">
 <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
 <meta name="apple-mobile-web-app-title" content="Aureon">
@@ -110,15 +118,24 @@ export function registerConsoleRoutes({ app }) {
   app.get('/', (_req, res) => res.type('html').send(page));
   app.get('/console', (_req, res) => res.type('html').send(page));
   app.get('/manifest.webmanifest', (_req, res) => {
-    res.type('application/manifest+json').send(JSON.stringify(manifest));
+    res.type('application/manifest+json').set('Cache-Control', 'no-cache').send(JSON.stringify(manifest));
   });
   app.get('/icon.svg', (_req, res) => {
     res.type('image/svg+xml').set('Cache-Control', 'public, max-age=86400').send(iconSvg);
+  });
+  app.get('/pwa/icon-192.svg', (_req, res) => {
+    res.type('image/svg+xml').set('Cache-Control', 'public, max-age=86400').send(iconSvg);
+  });
+  app.get('/pwa/icon-512.svg', (_req, res) => {
+    res.type('image/svg+xml').set('Cache-Control', 'public, max-age=86400').send(iconSvg);
+  });
+  app.get('/pwa/icon-maskable-512.svg', (_req, res) => {
+    res.type('image/svg+xml').set('Cache-Control', 'public, max-age=86400').send(maskableIconSvg);
   });
   app.get('/sw.js', (_req, res) => {
     res.type('application/javascript').set('Cache-Control', 'no-cache').send(serviceWorker);
   });
   app.get('/console/app.js', (_req, res) => {
-    res.type('application/javascript').send(`(${runAureonConsole.toString()})();(${runConsoleEnhancements.toString()})();if('serviceWorker' in navigator){navigator.serviceWorker.register('/sw.js').catch(()=>{});}`);
+    res.type('application/javascript').set('Cache-Control', 'no-cache').send(`(${runAureonConsole.toString()})();(${runConsoleEnhancements.toString()})();if('serviceWorker' in navigator&&window.isSecureContext){navigator.serviceWorker.register('/sw.js',{updateViaCache:'none'}).then(registration=>registration.update()).catch(()=>{});}`);
   });
 }
