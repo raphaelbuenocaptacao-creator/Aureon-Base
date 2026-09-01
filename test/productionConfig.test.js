@@ -1,6 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { validateProductionConfig } from '../src/validateProductionConfig.js';
+import { getPublicPasswordRecoveryReadiness } from '../src/passwordRecoveryReadiness.js';
 
 test('non-production environments do not require mail provider configuration', () => {
   assert.deepEqual(validateProductionConfig({ NODE_ENV: 'test' }), {
@@ -34,4 +35,26 @@ test('production accepts configured provider and verified custom sender', () => 
     MAIL_FROM: 'Aureon Base <no-reply@example.com>',
   });
   assert.deepEqual(result, { ok: true, production: true, errors: [] });
+});
+
+test('public recovery readiness exposes status without secret values', () => {
+  const apiKey = 're_secret_value_that_must_never_leak';
+  const sender = 'Aureon Base <security@example.com>';
+  const result = getPublicPasswordRecoveryReadiness({
+    VERCEL_ENV: 'production',
+    RESEND_API_KEY: apiKey,
+    MAIL_FROM: sender,
+  });
+
+  assert.deepEqual(result, {
+    configured: true,
+    production: true,
+    provider: 'resend',
+    sender_configured: true,
+    verified_sender_required: true,
+    issues: [],
+  });
+  assert.equal(JSON.stringify(result).includes(apiKey), false);
+  assert.equal(JSON.stringify(result).includes(sender), false);
+  assert.equal(Object.hasOwn(result, 'api_key_configured'), false);
 });

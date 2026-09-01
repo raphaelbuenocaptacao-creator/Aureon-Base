@@ -61,6 +61,28 @@ A provider HTTP acceptance alone is not considered proof of mailbox delivery. To
 
 Do not paste the reset token, API key, e-mail body, or production credentials into issues, CI logs, screenshots, or commit history.
 
+### Fail-closed deployment procedure
+
+Production builds must run the recovery configuration validator before reporting readiness. If the recovery provider key or verified sender is absent, the new deployment must fail instead of replacing the last known-good production deployment.
+
+Use the following evidence order when enabling recovery in production:
+
+1. Configure the provider key and verified sender only in the host secret manager; never in GitHub files or CI output.
+2. Deploy the recovery gate and confirm the deployment becomes `READY` only after the validator passes.
+3. Confirm the public readiness projection reports recovery as configured without returning the provider key or sender value.
+4. Send one reset to a controlled mailbox and record only timestamp, provider acceptance identifier/status and mailbox-delivery result; do not retain the raw token in CI artifacts.
+5. Consume the token once, verify reuse is rejected, and verify the pre-reset session is revoked.
+6. Request a second token for the same account and verify the previous token is no longer usable.
+7. Keep the capability marked partial until mailbox delivery and the complete reset flow both have production evidence.
+
+If the provider is intentionally disabled, keep the previous production deployment active and leave the recovery gate unmerged rather than weakening validation.
+
+## Authenticated multi-tenant production smoke
+
+Realtime and SDK isolation are only production-validated when two distinct production test projects are exercised with two distinct test identities. The smoke must prove own-tenant read/write succeeds, A->B and B->A access is denied, private Storage objects cannot cross tenant boundaries, Realtime events cannot be published/read across projects, and probe data is cleaned up afterward.
+
+Store the four smoke inputs (`A/B` token + `A/B` project) only as protected CI secrets. A missing or partial secret set must result in an explicit `SKIP`/configuration failure, never a false PASS. Do not publish tokens in workflow logs or artifacts.
+
 ## Before charging customers
 
 - choose a payment provider
