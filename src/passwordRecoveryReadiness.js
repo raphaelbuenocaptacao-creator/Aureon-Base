@@ -21,3 +21,15 @@ export function getPasswordRecoveryReadiness(env = process.env) {
     }),
   };
 }
+
+export function getPublicPasswordRecoveryReadiness(env = process.env) {
+  const readiness = getPasswordRecoveryReadiness(env);
+  return {
+    configured: readiness.configured,
+    production: readiness.production,
+    provider: readiness.provider,
+    sender_configured: readiness.sender_configured,
+    verified_sender_required: readiness.verified_sender_required,
+    issues: readiness.issues,
+  };
+}
